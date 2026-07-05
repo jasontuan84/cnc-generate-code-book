@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0 · Ý tưởng cốt lõi: mô hình Chuỗi - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 0 · Nền tảng</span>
+    <h1>Ý tưởng cốt lõi: mô hình Chuỗi</h1>
+    <p class="lead">Trước khi bàn về đường cong, vùng tô hay chữ, ta cần một sự thật đơn giản làm nền: mọi thứ mà một chiếc máy point‑to‑point làm được đều quy về một cấu trúc dữ liệu duy nhất - một <b>chuỗi điểm</b>. Nắm được điều này, cả hệ thống trở nên sáng rõ.</p>
+
+    <h2>1. Mọi máy đều nói cùng một "ngôn ngữ trừu tượng"</h2>
+    <p>Máy vẽ bút, máy laser, máy cắt decal/dao rọc, máy phay CNC - dù khác nhau về vật lý - đều nhận cùng một tập lệnh cơ bản:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Di chuyển khi công cụ NHẢ</h4><p>Bút nâng / laser tắt / dao nâng. Đây là chuyển động <b>di chuyển (travel/rapid)</b>: không tạo ra dấu vết gì trên vật liệu.</p></div>
+      <div class="card"><h4>Di chuyển khi công cụ ĂN</h4><p>Bút hạ / laser bật / dao hạ. Đây là chuyển động <b>làm việc (working)</b>: tạo ra một vệt vẽ, một đường cắt, hoặc một vết cháy.</p></div>
+      <div class="card"><h4>Điều biến công cụ (tuỳ chọn)</h4><p>Trong lúc làm việc, có thể thay đổi cường độ: công suất laser, tốc độ trục chính, lực ấn của dao.</p></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 220" width="640" role="img" aria-label="Phân biệt nét di chuyển và nét làm việc">
+        <rect x="20" y="20" width="600" height="180" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+        <text x="40" y="46" font-size="13" fill="#8a94a6" font-family="sans-serif">Vật liệu</text>
+
+        <!-- working strokes (solid blue) -->
+        <path d="M80 150 L 150 70" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M150 70 L 230 150" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <!-- travel (dashed grey) -->
+        <path d="M230 150 L 360 60" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <!-- working again -->
+        <path d="M360 60 L 420 150 L 500 60 L 560 150" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+        <!-- pen up/down markers -->
+        <circle cx="230" cy="150" r="5" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+        <text x="230" y="178" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">nâng</text>
+        <circle cx="360" cy="60" r="5" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+        <text x="360" y="46" text-anchor="middle" font-size="11" fill="#2563eb" font-family="sans-serif">hạ</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc (bút hạ - tạo vết)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Nét di chuyển (bút nâng - không vết)</span>
+      </div>
+      <figcaption>Toàn bộ đầu ra của máy, dù phức tạp đến đâu, chỉ là sự đan xen của hai loại chuyển động này.</figcaption>
+    </figure>
+
+    <h2>2. Định nghĩa "Chuỗi" (chain)</h2>
+    <p>Vì chỉ có hai loại chuyển động, mọi bản vẽ đều rút gọn về một cấu trúc dữ liệu duy nhất:</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Chuỗi (chain)</span>
+      <p>Một <b>chuỗi</b> = một danh sách điểm 2‑D <em>có thứ tự</em> (một polyline) mà công cụ vạch qua trong <em>một lần đi liên tục ở trạng thái ĂN</em>. Giữa hai chuỗi, công cụ nhả ra và di chuyển.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 660 240" width="660" role="img" aria-label="Ba chuỗi và các nét di chuyển giữa chúng">
+        <!-- chain A -->
+        <polyline points="60,180 90,110 130,80 175,95 200,150" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="60" cy="180" r="4" fill="#2563eb"/><circle cx="200" cy="150" r="4" fill="#2563eb"/>
+        <text x="120" y="215" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chuỗi A</text>
+
+        <!-- travel A→B -->
+        <path d="M200 150 L 320 90" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#ar0)"/>
+
+        <!-- chain B (closed loop) -->
+        <path d="M320 90 C 300 40, 400 40, 400 90 C 400 140, 300 140, 320 90 Z" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round"/>
+        <circle cx="320" cy="90" r="4" fill="#2563eb"/>
+        <text x="360" y="165" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chuỗi B (vòng kín)</text>
+
+        <!-- travel B→C -->
+        <path d="M320 90 L 470 170" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#ar0)"/>
+
+        <!-- chain C -->
+        <polyline points="470,170 520,110 560,120 600,70" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="470" cy="170" r="4" fill="#2563eb"/><circle cx="600" cy="70" r="4" fill="#2563eb"/>
+        <text x="535" y="205" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chuỗi C</text>
+
+        <defs>
+          <marker id="ar0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Ba chuỗi nối với nhau bằng các <b>nét di chuyển</b> (đứt nét). Đường cong, vùng tô, chữ và ảnh chỉ là những <em>nguồn khác nhau sinh ra chuỗi</em>.</figcaption>
+    </figure>
+
+    <p>Toàn bộ công việc gói gọn trong một câu: <em>sinh ra một tập chuỗi tái hiện bản vẽ, sắp xếp chúng để giảm thiểu quãng di chuyển, rồi tuần tự hoá chúng thành ngôn ngữ máy đích.</em> Đây là sự trừu tượng quan trọng nhất của cả hệ thống.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Nguyên tắc tách biệt cốt lõi</span>
+      <p>Giữ phần <b>hình học</b> (sinh chuỗi) hoàn toàn độc lập với phần <b>ngôn ngữ máy</b> (tuần tự hoá chuỗi). Chỉ giai đoạn phát mã cuối cùng - mỏng và duy nhất - mới biết đến máy cụ thể. Nếu một hàm tính hoa văn tô mà lại nhắc đến <code>G1</code> hay <code>PD</code>, thiết kế đã sai.</p>
+    </div>
+
+    <h2>3. Pipeline năm giai đoạn</h2>
+    <p>Việc biến bản vẽ thành mã đi qua năm giai đoạn tách bạch. Mỗi giai đoạn có một trách nhiệm duy nhất và giao tiếp với giai đoạn sau qua một hợp đồng rõ ràng.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 210" width="720" role="img" aria-label="Pipeline năm giai đoạn">
+        <!-- 5 boxes -->
+        <g font-family="sans-serif">
+          <!-- box template -->
+          <g>
+            <rect x="14"  y="40" width="122" height="70" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+            <text x="75" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">1 · Phân giải</text>
+            <text x="75" y="84" text-anchor="middle" font-size="11" fill="#4a5568">hình học</text>
+            <text x="75" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">bake transform</text>
+          </g>
+          <g>
+            <rect x="152" y="40" width="122" height="70" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+            <text x="213" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">2 · Trích xuất</text>
+            <text x="213" y="84" text-anchor="middle" font-size="11" fill="#4a5568">nguyên thuỷ</text>
+            <text x="213" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">làm phẳng cong</text>
+          </g>
+          <g>
+            <rect x="290" y="40" width="122" height="70" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+            <text x="351" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">3 · Lập kế hoạch</text>
+            <text x="351" y="84" text-anchor="middle" font-size="11" fill="#4a5568">tô/chữ/hoa văn</text>
+            <text x="351" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">sinh chuỗi</text>
+          </g>
+          <g>
+            <rect x="428" y="40" width="122" height="70" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+            <text x="489" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">4 · Sắp xếp</text>
+            <text x="489" y="84" text-anchor="middle" font-size="11" fill="#4a5568">chuỗi</text>
+            <text x="489" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">giảm di chuyển</text>
+          </g>
+          <g>
+            <rect x="566" y="40" width="140" height="70" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+            <text x="636" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#9be59b">5 · Phát mã</text>
+            <text x="636" y="84" text-anchor="middle" font-size="11" fill="#d6e2ff">ngôn ngữ máy</text>
+            <text x="636" y="99" text-anchor="middle" font-size="10" fill="#6b86b8">GRBL/HPGL…</text>
+          </g>
+
+          <!-- arrows -->
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M136 75 h14" marker-end="url(#arp)"/>
+            <path d="M274 75 h14" marker-end="url(#arp)"/>
+            <path d="M412 75 h14" marker-end="url(#arp)"/>
+            <path d="M550 75 h14" marker-end="url(#arp)"/>
+          </g>
+
+          <!-- band labels -->
+          <text x="150" y="140" font-size="11" fill="#2563eb" font-weight="700">◀ HÌNH HỌC (độc lập máy) ▶</text>
+          <text x="600" y="140" font-size="11" fill="#16a34a" font-weight="700">◀ NGÔN NGỮ MÁY ▶</text>
+          <line x1="14" y1="152" x2="412" y2="152" stroke="#b9d4ff" stroke-width="3"/>
+          <line x1="428" y1="152" x2="706" y2="152" stroke="#b7e3c2" stroke-width="3"/>
+        </g>
+        <defs>
+          <marker id="arp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Bốn giai đoạn đầu là <b>hình học thuần</b>, hoàn toàn không biết đến máy. Chỉ giai đoạn 5 - mỏng - mới dịch chuỗi sang ngôn ngữ cụ thể. Đổi GRBL sang HPGL chỉ thay đổi giai đoạn này.</figcaption>
+    </figure>
+
+    <div class="kv">
+      <div><dt>1 · Phân giải hình học</dt><dd>Bake mọi phép biến đổi (tịnh tiến/xoay/co giãn/xén) vào không gian thế giới; chọn quy tắc tô; nhận diện lỗ. → <a href="02-hinh-hoc.html">Ch. 2</a></dd></div>
+      <div><dt>2 · Trích xuất nguyên thuỷ</dt><dd>Làm phẳng đường cong Bézier/cung thành polyline ở dung sai kiểm soát; tách <em>đường viền</em> khỏi <em>vùng bên trong</em>. → <a href="02-hinh-hoc.html">Ch. 2</a>, <a href="04-duong-vien.html">Ch. 4</a></dd></div>
+      <div><dt>3 · Lập kế hoạch chuỗi</dt><dd>Với mỗi nguồn: vùng tô đặc → bộ tô; hoa văn → lát &amp; xén; chữ → trục xương; ảnh → điều biến dòng quét. → <a href="03-thuat-toan-to.html">Ch. 3</a>, <a href="05-chu-net-don.html">5</a>, <a href="06-hoa-van.html">6</a>, <a href="09-raster.html">9</a></dd></div>
+      <div><dt>4 · Sắp xếp chuỗi</dt><dd>Tối thiểu hoá quãng di chuyển bằng láng giềng gần nhất, chọn điểm vào, tái định gốc vòng. → <a href="07-sap-xep.html">Ch. 7</a></dd></div>
+      <div><dt>5 · Phát mã</dt><dd>Trạng thái công cụ modal, định dạng toạ độ, preamble/postamble, biến đổi hệ toạ độ. → <a href="08-sinh-ma.html">Ch. 8</a></dd></div>
+    </div>
+
+    <h2>4. Bảng thuật ngữ</h2>
+    <p>Những thuật ngữ sẽ xuất hiện xuyên suốt quyển sách. Bạn không cần nhớ hết ngay - hãy quay lại đây khi gặp một từ lạ.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Thuật ngữ</th><th>Ý nghĩa</th></tr></thead>
+      <tbody>
+        <tr><td><b>Chuỗi / polyline</b></td><td>Danh sách điểm có thứ tự, vạch trong một lần đi ở trạng thái ăn.</td></tr>
+        <tr><td><b>Nét làm việc</b> (working)</td><td>Chuyển động với công cụ đang ăn (tạo vết trên vật liệu).</td></tr>
+        <tr><td><b>Di chuyển / rapid</b> (travel)</td><td>Chuyển động với công cụ đã nhả (không tạo vết).</td></tr>
+        <tr><td><b>Bút nâng / bút hạ</b></td><td>Tên chung cho nhả / ăn, bất kể công cụ là gì.</td></tr>
+        <tr><td><b>Làm phẳng</b> (flattening)</td><td>Xấp xỉ đường cong (Bézier/cung) bằng các đoạn thẳng ngắn.</td></tr>
+        <tr><td><b>Dung sai</b> (tolerance)</td><td>Sai lệch tối đa cho phép giữa đường cong thật và polyline làm phẳng.</td></tr>
+        <tr><td><b>Quy tắc tô</b> (fill rule)</td><td>Cách các subpath lồng nhau quyết định trong/ngoài (chẵn‑lẻ vs winding khác‑không).</td></tr>
+        <tr><td><b>Lỗ / counter</b></td><td>Vùng bên trong <em>không</em> được tô (ví dụ lỗ trong chữ "O").</td></tr>
+        <tr><td><b>Hatch</b></td><td>Các đường tô thẳng song song.</td></tr>
+        <tr><td><b>Boustrophedon</b></td><td>Đường đi "cày ruộng" tới‑lui; đảo chiều mỗi dòng quét.</td></tr>
+        <tr><td><b>Contour / offset fill</b></td><td>Các bản sao đồng tâm của đường viền, thu dần vào trong.</td></tr>
+        <tr><td><b>Kerf / tool offset</b></td><td>Bề rộng vật liệu công cụ lấy đi/để lại; cần offset hình học để bù.</td></tr>
+        <tr><td><b>Overcut</b></td><td>Kéo dài một đoạn nhỏ qua điểm đầu của vòng kín để dao cắt đứt hẳn.</td></tr>
+        <tr><td><b>Trạng thái modal</b></td><td>Một thiết lập của máy tồn tại đến khi bị thay đổi (đơn vị, công suất, tốc độ).</td></tr>
+        <tr><td><b>Dialect</b> (ngôn ngữ)</td><td>Một ngôn ngữ lệnh cụ thể (GRBL, HPGL, Marlin…).</td></tr>
+        <tr><td><b>Trường khoảng cách</b></td><td>Lưới mà mỗi ô bên trong chứa khoảng cách tới biên; các đường đẳng trị của nó là các offset vào trong (dùng cho Contour/Spiral bền vững, <a href="02-hinh-hoc.html">Ch. 2</a>).</td></tr>
+        <tr><td><b>Đường đẳng trị</b> (iso-contour)</td><td>Đường có giá trị không đổi trong một trường; ở đây là tập <code>{khoảng cách = d}</code> = offset vào trong một đoạn <code>d</code>. Trích bằng <em>marching squares</em>.</td></tr>
+        <tr><td><b>Nest</b> (tổ)</td><td>Nhóm tối đa các vòng offset đồng tâm nối được mà không cần nhấc bút; một lỗ hay một chỗ thắt bắt đầu một nest mới. Spiral phát một nét cho mỗi nest.</td></tr>
+        <tr><td><b>Lift</b> (nhấc)</td><td>Một chu kỳ nâng bút → di chuyển → hạ lại; chi phí thời gian chủ đạo, nên các bộ tô được tối ưu để giảm thiểu nó (<a href="03-thuat-toan-to.html">Ch. 3</a>).</td></tr>
+        <tr><td><b>Luminance</b> (độ sáng)</td><td>Độ sáng cảm nhận <code>0.299R+0.587G+0.114B</code> của màu tô; điều khiển mật độ tô theo màu (<a href="03-thuat-toan-to.html">Ch. 3</a>).</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2>5. Bảy nguyên tắc khi sinh loại mã này</h2>
+    <ol>
+      <li><b>Không bao giờ gắn hình học với ngôn ngữ máy.</b> Hình học trả về chuỗi; một bộ phát mã riêng biến chuỗi thành văn bản.</li>
+      <li><b>Chuỗi là hợp đồng.</b> Thiết kế mỗi tính năng để <em>thêm chuỗi vào một danh sách</em>. Việc sắp xếp và phát mã sau đó áp dụng đồng nhất cho tất cả.</li>
+      <li><b>Mỗi tham số điều chỉnh được đều có lý do.</b> Khoảng cách, dung sai, ngưỡng - hãy nêu <em>vì sao</em> giá trị đó, để có thể tinh chỉnh lại một cách thông minh.</li>
+      <li><b>Ưu tiên đường nối liền hơn đường rời rạc.</b> Chi phí thời gian bị chi phối bởi số lần nhấc công cụ và quãng di chuyển, không phải bởi quãng đường làm việc (xem mô hình chi phí ở <a href="03-thuat-toan-to.html">Ch. 3</a>).</li>
+      <li><b>Luôn có phương án dự phòng.</b> Mọi chiến lược đều có thể thoái hoá trên một hình bệnh lý; một bộ sinh mã bền vững sẽ lùi về phương pháp đúng đơn giản nhất thay vì không phát ra gì.</li>
+      <li><b>Ưu tiên primitive bền vững về tô-pô.</b> Một primitive âm thầm hỏng trên hình có lỗ hoặc lõm (ví dụ phép inset ngây thơ dời từng đỉnh) khiến bộ chọn phía trên nó <em>nói dối</em>: nó chọn đúng chiến lược, rồi chiến lược đó lặng lẽ thoái hoá. Hãy dựng phép offset trên một <b>trường khoảng cách</b> (<a href="02-hinh-hoc.html">Ch. 2</a>) để nó hoạt động với mọi tô-pô, khi đó cả tầng tô trở nên trung thực.</li>
+      <li><b>Bộ chọn tự động mã hoá năng lực hiện tại của các chiến lược.</b> Khi bạn tăng cường một chiến lược (làm Spiral bền vững về tô-pô, xem <a href="03-thuat-toan-to.html">Ch. 3</a>), phải <b>tinh chỉnh lại (re-tune) bộ chọn</b> để khai thác nó - nếu không, cải tiến đó bị bỏ phí. Luật của bộ chọn không phải là bất biến; chúng phản ánh những gì các chiến lược đằng sau <em>hiện làm được</em>.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Nắm được chương này, bạn đã có nửa bức tranh</span>
+      <p>Phần còn lại của quyển sách chỉ đơn giản trả lời: <em>làm sao sinh ra chuỗi tốt nhất</em> cho từng loại nguồn (tô, viền, chữ, ảnh), <em>sắp xếp</em> chúng ra sao, và <em>dịch</em> chúng thành mã như thế nào. Tất cả đều dựa trên mô hình chuỗi bạn vừa học.</p>
+    </div>
+
+    <div class="pager">
+      <a href="index.html">
+        <div class="dir">← Trước</div>
+        <div class="ttl">Trang bìa &amp; Giới thiệu chung</div>
+      </a>
+      <a class="next" href="01-kien-truc.html">
+        <div class="dir">Chương tiếp →</div>
+        <div class="ttl">1 · Kiến trúc &amp; Pipeline</div>
+      </a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

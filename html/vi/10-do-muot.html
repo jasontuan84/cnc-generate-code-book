@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 · Độ mượt &amp; Liên tục đường cong - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 10 · Chất lượng</span>
+    <h1>Độ mượt &amp; Liên tục đường cong</h1>
+    <p class="lead">Khác biệt dễ thấy nhất giữa một bộ sinh mã tốt và một bộ sinh mã tồi nằm ở cách nó xử lý <b>đường cong</b>. Một đầu ra đạt chất lượng phải cùng lúc thoả ba điều: cong ra cong (không răng cưa), liền ra liền (không đứt đoạn), và trung thực với bản thiết kế trong một dung sai được kiểm soát. Chương này gom mọi kỹ thuật bảo vệ ba tính chất đó, từ khâu làm phẳng đường cong, qua khâu ghép chuỗi, tới nét chuyển động cuối cùng phát ra máy.</p>
+
+    <div class="cards">
+      <div class="card"><h4>Mượt (smooth)</h4><p>Đường cong đọc ra là đường cong, không phải đa giác gãy khúc. Không thấy các mặt phẳng nhỏ, không răng cưa (<em>"không răng cưa"</em>).</p></div>
+      <div class="card"><h4>Liên tục (continuous)</h4><p>Không có khe hở, không có chỗ gãy tình cờ giữa các đoạn lẽ ra là một nét liền (<em>"không đứt đoạn"</em>).</p></div>
+      <div class="card"><h4>Trung thực (faithful)</h4><p>Đường chạy công cụ bám theo hình thiết kế trong một dung sai được kiểm soát, không mất nét, không phình méo.</p></div>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Áp dụng cho mọi nguồn chuỗi</span>
+      <p>Các nguyên tắc ở đây áp dụng cho <em>tất cả</em> nguồn sinh chuỗi: vùng tô, đường viền, chữ, hoa văn. Bất kể chuỗi đến từ đâu, ba tính chất trên đều phải được bảo vệ đồng nhất.</p>
+    </div>
+
+    <h2>1. Răng cưa và đứt đoạn từ đâu ra?</h2>
+    <p>Trước khi sửa, hãy phân loại triệu chứng và truy về nguyên nhân gốc. Gần như mọi khiếm khuyết chất lượng đường cong đều rơi vào một trong bảy nhóm dưới đây, và mỗi nhóm có một cách sửa cụ thể trong các mục sau.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Triệu chứng</th><th>Nguyên nhân gốc</th><th>Sửa ở</th></tr></thead>
+      <tbody>
+        <tr><td><b>Đường cong bị mặt phẳng hoá</b> (thấy rõ các đoạn thẳng)</td><td>Dung sai làm phẳng quá thô so với tỉ lệ thực</td><td><a href="#s2">§2</a></td></tr>
+        <tr><td><b>Răng cưa bậc thang</b> (staircase) trên đường chéo</td><td>Bước xương/raster chưa làm trơn; hoặc làm tròn số nguyên</td><td><a href="#s4">§4</a>, <a href="#s7">§7</a></td></tr>
+        <tr><td><b>Rung lượn</b> (wobble) dọc một nét lẽ ra thẳng mượt</td><td>Nhiễu ±1 mẫu (xương raster) chưa được lọc thông thấp</td><td><a href="#s4">§4</a></td></tr>
+        <tr><td><b>Khe hở</b> giữa hai đoạn lẽ ra nối nhau</td><td>Hai điểm cuối lệch nhau &gt; ε mà không bao giờ được hàn</td><td><a href="#s3">§3.1</a></td></tr>
+        <tr><td><b>Một vùng tô liền vỡ thành nhiều nét</b></td><td>Nét nối bị phép kiểm tra trong/ngoài nghiêm ngặt loại nhầm</td><td><a href="#s3">§3.4</a></td></tr>
+        <tr><td><b>Vòng không kín</b></td><td>Đỉnh đầu/cuối lệch &gt; ε; đỉnh khép vòng bị rơi mất</td><td><a href="#s3">§3.2</a></td></tr>
+        <tr><td><b>Góc nhọn bị bo tròn</b></td><td>Làm trơn quá tay, hoặc offset kéo lê của công cụ dao</td><td><a href="#s4">§4</a></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 250" width="720" role="img" aria-label="Sáu triệu chứng lỗi đường cong minh hoạ nhỏ">
+        <g font-family="sans-serif">
+          <!-- 1 faceting -->
+          <text x="90" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Mặt phẳng hoá</text>
+          <polyline points="30,90 55,55 95,45 130,62 150,95" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M30 90 C 55 45, 130 45, 150 95" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 2 staircase -->
+          <text x="270" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Bậc thang</text>
+          <path d="M210 95 H235 V80 H258 V65 H281 V50 H305 V40" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M210 95 L305 40" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 3 wobble -->
+          <text x="450" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Rung lượn</text>
+          <polyline points="390,68 405,62 418,70 432,60 447,69 461,61 475,70 489,62 505,68" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M390 65 H505" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 4 gap -->
+          <text x="630" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Khe hở</text>
+          <path d="M570 90 L618 52" stroke="#2563eb" stroke-width="2.5"/>
+          <path d="M628 48 L690 60" stroke="#2563eb" stroke-width="2.5"/>
+          <circle cx="618" cy="52" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+          <circle cx="628" cy="48" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+
+          <!-- 5 open loop -->
+          <text x="150" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Vòng không kín</text>
+          <path d="M120 210 A38 38 0 1 1 128 176" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+          <circle cx="120" cy="210" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+          <circle cx="128" cy="176" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+
+          <!-- 6 rounded corner -->
+          <text x="400" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Góc bị bo tròn</text>
+          <path d="M330 215 L400 175 Q412 168 420 182 L470 215" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M330 215 L406 172 L470 215" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+          <circle cx="406" cy="172" r="3" fill="#94a3b8"/>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#dc2626"></i> Kết quả lỗi</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Hình đúng mong muốn</span>
+      </div>
+      <figcaption>Sáu dạng lỗi thường gặp: nét đỏ là kết quả sai, nét xám đứt là hình lẽ ra phải có. Ghi nhớ hình dạng của chúng giúp chẩn đoán nhanh khi nhìn đầu ra thực.</figcaption>
+    </figure>
+
+    <h2 id="s2">2. Chất lượng làm phẳng (nền tảng chống mặt phẳng hoá)</h2>
+    <p>Đường cong chỉ biến thành đoạn thẳng <em>đúng một lần duy nhất</em>, ở khâu làm phẳng (flattening). Vì vậy đây chính là nơi độ mượt được quyết định thắng hay thua. Làm phẳng tồi thì mọi khâu sau không cứu lại được.</p>
+
+    <h3>2.1 Kiểm soát dung sai theo đơn vị thế giới</h3>
+    <p>Một đường cong làm phẳng với dung sai cố định theo <em>đơn vị đường dẫn</em> (path units) sẽ mặt phẳng hoá thậm tệ ở tỉ lệ mm. Hãy biến dung sai hiệu dụng thành một khoảng cách thực tế nằm dưới bề rộng vết của công cụ. Đây là <b>thủ thuật phóng to</b> (scale-up trick, xem <a href="02-hinh-hoc.html">Ch. 2 §1</a>): nhân đường dẫn với hệ số <code>k</code> (ví dụ <code>k ≈ 25</code>), làm phẳng, rồi thu nhỏ lại. Kết quả là dung sai hiệu dụng <code>≈ libraryTolerance / k ≈ 0.02 mm</code>. Ở kích thước đó, các mặt phẳng nhỏ không còn phân giải được về mặt vật lý, nên đường cong nhìn hoàn toàn mượt.</p>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">flatness test - phép kiểm độ phẳng</span>
+      <p>Một khúc Bézier được coi là "đủ phẳng" khi độ lệch của các điểm điều khiển so với dây cung nối hai đầu nhỏ hơn dung sai. Chưa đạt thì chia đôi khúc cong (de Casteljau) rồi kiểm lại từng nửa.</p>
+    </div>
+
+    <h3>2.2 Ưu tiên chia nhỏ thích nghi theo độ cong</h3>
+    <p>Các bộ làm phẳng tốt nhất đặt <b>nhiều điểm ở nơi độ cong lớn</b> và ít điểm ở các đoạn gần thẳng. Đây là <b>curvature-adaptive subdivision</b>: đệ quy chia đôi khúc Bézier (recursive de Casteljau subdivision) cho tới khi độ lệch điểm điều khiển nằm dưới dung sai. Cách này cho đường cong mượt <em>và</em> đầu ra gọn cùng lúc. Một bộ làm phẳng bước đều (uniform-step) vừa phí điểm ở đoạn thẳng, lại vừa có thể mặt phẳng hoá ở các góc gấp: chia nhỏ thích nghi luôn tốt hơn hẳn.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 300" width="720" role="img" aria-label="So sánh làm phẳng thô, mịn, bước đều và thích nghi">
+        <g font-family="sans-serif">
+          <!-- Panel A: coarse -->
+          <text x="120" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Dung sai thô → răng cưa</text>
+          <path d="M30 130 C 60 40, 180 40, 210 130" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <polyline points="30,130 90,58 150,58 210,130" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <g fill="#dc2626"><circle cx="30" cy="130" r="3.5"/><circle cx="90" cy="58" r="3.5"/><circle cx="150" cy="58" r="3.5"/><circle cx="210" cy="130" r="3.5"/></g>
+          <text x="120" y="152" text-anchor="middle" font-size="11" fill="#8a94a6">4 điểm - thấy rõ mặt phẳng</text>
+
+          <!-- Panel B: fine -->
+          <text x="360" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Dung sai mịn → mượt</text>
+          <path d="M270 130 C 300 40, 420 40, 450 130" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M270 130 C 300 40, 420 40, 450 130" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+          <g fill="#16a34a">
+            <circle cx="270" cy="130" r="2.5"/><circle cx="291" cy="97" r="2.5"/><circle cx="316" cy="72" r="2.5"/><circle cx="345" cy="58" r="2.5"/><circle cx="375" cy="55" r="2.5"/><circle cx="405" cy="62" r="2.5"/><circle cx="432" cy="86" r="2.5"/><circle cx="450" cy="130" r="2.5"/>
+          </g>
+          <text x="360" y="152" text-anchor="middle" font-size="11" fill="#8a94a6">nhiều điểm - mặt phẳng vô hình</text>
+
+          <!-- lower: uniform vs adaptive -->
+          <text x="120" y="196" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">Bước đều (uniform)</text>
+          <path d="M30 285 C 70 200, 90 200, 100 250 C 108 288, 200 288, 210 210" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M30 285 C 70 200, 90 200, 100 250 C 108 288, 200 288, 210 210" fill="none" stroke="#d97706" stroke-width="2"/>
+          <g fill="#d97706">
+            <circle cx="30" cy="285" r="2.6"/><circle cx="52" cy="238" r="2.6"/><circle cx="74" cy="212" r="2.6"/><circle cx="96" cy="245" r="2.6"/><circle cx="118" cy="283" r="2.6"/><circle cx="150" cy="285" r="2.6"/><circle cx="182" cy="264" r="2.6"/><circle cx="210" cy="210" r="2.6"/>
+          </g>
+          <text x="120" y="298" text-anchor="middle" font-size="11" fill="#8a94a6">điểm dàn đều - phí ở chỗ thẳng</text>
+
+          <text x="360" y="196" text-anchor="middle" font-size="13" font-weight="700" fill="#7c3aed">Thích nghi (adaptive)</text>
+          <path d="M270 285 C 310 200, 330 200, 340 250 C 348 288, 440 288, 450 210" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M270 285 C 310 200, 330 200, 340 250 C 348 288, 440 288, 450 210" fill="none" stroke="#7c3aed" stroke-width="2"/>
+          <g fill="#7c3aed">
+            <circle cx="270" cy="285" r="2.6"/><circle cx="288" cy="235" r="2.6"/><circle cx="300" cy="215" r="2.6"/><circle cx="316" cy="212" r="2.6"/><circle cx="332" cy="235" r="2.6"/><circle cx="340" cy="250" r="2.6"/><circle cx="348" cy="270" r="2.6"/><circle cx="360" cy="284" r="2.6"/><circle cx="400" cy="286" r="2.6"/><circle cx="428" cy="262" r="2.6"/><circle cx="442" cy="232" r="2.6"/><circle cx="450" cy="210" r="2.6"/>
+          </g>
+          <text x="360" y="298" text-anchor="middle" font-size="11" fill="#8a94a6">dày ở chỗ cong, thưa ở chỗ thẳng</text>
+        </g>
+      </svg>
+      <figcaption>Trên: cùng một đường cong, dung sai thô để lộ mặt phẳng (đỏ), dung sai mịn thì mượt (xanh lá). Dưới: bước đều rải điểm dàn trải kể cả trên đoạn thẳng; <b>chia nhỏ thích nghi</b> dồn điểm vào chỗ cong gắt và tiết kiệm điểm ở chỗ gần thẳng, cho cùng độ mượt với ít điểm hơn.</figcaption>
+    </figure>
+
+    <h3>2.3 Đánh đổi của dung sai</h3>
+    <pre><code><span class="cm"># Hai chiều đánh đổi</span>
+dung sai NHỎ  → cong mượt hơn, NHIỀU điểm hơn → đầu ra lớn, dòng chậm hơn
+dung sai LỚN  → ít điểm hơn                    → mặt phẳng hoá (răng cưa)</code></pre>
+    <p>Hãy chọn dung sai bằng "vừa dưới bề rộng vết của công cụ": <b>≈ 0.02 mm</b> làm giá trị mịn mặc định (<a href="02-hinh-hoc.html">Ch. 2 §1</a>), và <b>≈ 0.05 mm</b> làm mức thô hơn, chỉ <em>chấp nhận được</em> cho các đường biên dùng trong <b>quyết định không phát đỉnh</b> (metric, biên ô lát, kiểm tra trong/ngoài).</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Mức thô 0.05 mm không bao giờ dùng cho đỉnh phát ra máy</span>
+      <p>Tuyệt đối <em>không</em> dùng dung sai thô cho một đường biên mà giao điểm của nó trở thành điểm cuối của nét tô/hoa văn phát ra, hoặc phải khớp với một đường viền. Làm vậy sẽ tái tạo đúng cái đường nối lệch (seam) mà mục này cảnh báo. Cả hai con số đều là ước lượng gắn với độ phân giải công cụ, không phải hằng số cứng. Đừng thu dung sai nhỏ tuỳ tiện: vượt quá độ phân giải công cụ, bạn chỉ chất thêm tải cho dòng phát (<a href="11-hieu-nang.html">Ch. 11</a>) mà không thu được chút cải thiện nhìn thấy nào.</p>
+    </div>
+
+    <h3>2.4 Giữ một nguồn sự thật duy nhất</h3>
+    <p>Hãy làm phẳng mọi đường cong qua <em>một</em> routine với <em>một</em> chính sách dung sai (một dung sai mịn cho bất cứ thứ gì mắt người dõi theo). Nếu các tính năng khác nhau làm phẳng ở dung sai khác nhau, thì một đường tô và đường viền mà nó gặp sẽ không khớp nhau, tạo ra các đường nối lệch nhìn thấy được.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Một routine, một chính sách</span>
+      <p>Nguyên tắc "một nguồn sự thật" chống được cả hai lỗi cùng lúc: mặt phẳng hoá không đồng đều <em>và</em> các đường nối lệch giữa tính năng. Đừng để mỗi module tự chọn dung sai riêng.</p>
+    </div>
+
+    <h2 id="s3">3. Liên tục: không khe hở, không gãy tình cờ</h2>
+    <p>"Liên tục" có hai mức, mượn từ các lớp <b>geometric continuity</b> của CAD (ở đây viết là G⁰/G¹):</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">G⁰/G¹ KHÁC với lệnh G-code G0/G1</span>
+      <p>Đừng nhầm lẫn. <b>G⁰/G¹</b> ở đây là <em>lớp liên tục hình học</em> (positional / tangential continuity). Còn <code>G0</code>/<code>G1</code> trong <a href="08-sinh-ma.html">Ch. 8</a> là <em>lệnh chuyển động G-code</em> (di chuyển nhanh / nội suy thẳng). Chúng hoàn toàn không liên quan; trùng ký tự chỉ là ngẫu nhiên.</p>
+    </div>
+
+    <div class="kv">
+      <div><dt>G⁰ (vị trí)</dt><dd>Hai đoạn liên tiếp <em>chung đúng một điểm cuối</em> - không có khe hở. Nhưng hướng đi tới điểm chung có thể đổi đột ngột (còn gãy góc).</dd></div>
+      <div><dt>G¹ (tiếp tuyến)</dt><dd>Ngoài chung điểm, hai đoạn còn <em>chung cả hướng</em> tại điểm nối - không có chỗ gãy nhìn thấy được. Nét chảy trơn qua điểm nối.</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 700 250" width="700" role="img" aria-label="So sánh liên tục G0, G1 và trường hợp hở">
+        <g font-family="sans-serif">
+          <!-- gap -->
+          <text x="120" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Hở (không đạt G⁰)</text>
+          <path d="M30 180 C 60 90, 100 90, 118 120" fill="none" stroke="#dc2626" stroke-width="3"/>
+          <path d="M132 128 C 150 155, 190 160, 215 110" fill="none" stroke="#dc2626" stroke-width="3"/>
+          <circle cx="118" cy="120" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="132" cy="128" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="125" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">hai điểm cuối lệch nhau</text>
+
+          <!-- G0 -->
+          <text x="350" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">G⁰: chung điểm, gãy hướng</text>
+          <path d="M260 180 C 290 90, 330 90, 350 130" fill="none" stroke="#d97706" stroke-width="3"/>
+          <path d="M350 130 L 445 110" fill="none" stroke="#d97706" stroke-width="3"/>
+          <circle cx="350" cy="130" r="4" fill="#d97706"/>
+          <path d="M350 130 l 8 -16" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <path d="M350 130 l 18 -3.8" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <text x="350" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">không hở, nhưng gãy góc</text>
+
+          <!-- G1 -->
+          <text x="590" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">G¹: chung điểm &amp; hướng</text>
+          <path d="M500 180 C 530 100, 560 108, 585 130" fill="none" stroke="#16a34a" stroke-width="3"/>
+          <path d="M585 130 C 610 152, 650 130, 665 95" fill="none" stroke="#16a34a" stroke-width="3"/>
+          <circle cx="585" cy="130" r="4" fill="#16a34a"/>
+          <path d="M567 116 L 603 144" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <text x="585" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">nét chảy trơn qua điểm nối</text>
+        </g>
+      </svg>
+      <figcaption>Ba tình huống ở điểm nối. Trái: hai điểm cuối chưa được hàn nên còn <b>hở</b> (thất bại cả G⁰). Giữa: <b>G⁰</b> - chung điểm nên không hở, nhưng tiếp tuyến đổi đột ngột nên thấy góc gãy. Phải: <b>G¹</b> - chung cả điểm lẫn tiếp tuyến (đường xám đứt), nét đi trơn qua chỗ nối.</figcaption>
+    </figure>
+
+    <h3 id="s31">3.1 Hàn các điểm cuối trùng nhau (diệt khe hở)</h3>
+    <p>Bất cứ khi nào hai đoạn/chuỗi lẽ ra gặp nhau, hãy ép điểm chung của chúng thành <b>đồng nhất</b> chứ không chỉ gần nhau. Snap các điểm cuối trong một epsilon về một giá trị chung (đây là <b>endpoint welding / vertex snapping</b>). Đừng bao giờ trông cậy vào chuyện hai điểm được tính độc lập lại bằng nhau tới từng bit. Một khe hở dưới dung sai sẽ biến thành một nét nâng bút + di chuyển + hạ bút thừa nhìn thấy được - chính là lỗi <em>"đứt đoạn"</em> kinh điển.</p>
+
+    <figure>
+      <svg viewBox="0 0 700 220" width="700" role="img" aria-label="Hàn điểm trùng và đóng vòng tường minh">
+        <g font-family="sans-serif">
+          <!-- before weld -->
+          <text x="175" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Trước: khe hở dưới ε</text>
+          <path d="M40 150 L 150 70" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <path d="M162 66 L 300 120" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <!-- spurious travel across the gap -->
+          <path d="M150 70 L 162 66" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 4"/>
+          <circle cx="150" cy="70" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="162" cy="66" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="156" y="52" text-anchor="middle" font-size="10.5" fill="#dc2626">nâng+di chuyển+hạ thừa</text>
+          <text x="175" y="185" text-anchor="middle" font-size="11" fill="#8a94a6">hai điểm lệch &gt; 0 → máy nhấc bút</text>
+
+          <!-- after weld -->
+          <text x="525" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Sau: hàn về một điểm</text>
+          <path d="M390 150 L 505 68" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <path d="M505 68 L 650 120" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="505" cy="68" r="4.5" fill="#16a34a"/>
+          <text x="525" y="185" text-anchor="middle" font-size="11" fill="#8a94a6">một điểm chung → một nét liền</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Di chuyển (bút nâng)</span>
+        <span><i style="border-color:#16a34a"></i> Đã hàn</span>
+      </div>
+      <figcaption>Một khe hở nhỏ dưới dung sai (trái) buộc máy nhấc bút, di chuyển một quãng cực ngắn rồi hạ bút lại: đường nét trông đứt đoạn và tốn thời gian. Sau khi hàn (phải), hai đoạn chia chung đúng một đỉnh nên thành một nét liền.</figcaption>
+    </figure>
+
+    <h3 id="s32">3.2 Đóng vòng một cách tường minh</h3>
+    <p>Một subpath kín phải có <code>first == last</code> trong ε. Nếu khâu làm phẳng hoặc một phép trung gian để chúng lệch nhau chút ít, hãy nối lại đỉnh đầu vào cuối để khép vòng. Kiểm tra tính kín bằng epsilon trên bình phương khoảng cách và ít nhất 3–4 điểm (<a href="02-hinh-hoc.html">Ch. 2 §2</a>). Một vòng không khép để lại một khe hở nhỏ ngay tại chỗ nối đầu-cuối, đúng dạng lỗi ở §3.1.</p>
+
+    <h3 id="s33">3.3 Đừng cắt vụn các đoạn liền mạch</h3>
+    <p>Khi xén các đường tô/hoa văn vào một vùng (<a href="02-hinh-hoc.html">Ch. 2 §6</a>), hãy <b>gộp</b> các đoạn con nằm trong liền kề nhau thành một chuỗi, thay vì phát ra từng mảnh tí hon riêng lẻ. Chỉ một lần <em>thực sự</em> ra khỏi rồi vào lại vùng mới được phép cắt chuỗi. Phát theo từng mảnh sẽ sinh ra hàng trăm vi-chuỗi và một đường chạy giật cục, đầy những lần nhấc bút.</p>
+
+    <h3 id="s34">3.4 Nhích điểm dò biên (một lỗi đứt đoạn tinh vi)</h3>
+    <p>Một nét nối chạy <em>dọc theo</em> cạnh của vùng (ví dụ nét quay đầu của kiểu cày ruộng boustrophedon) có điểm giữa nằm <em>ngay trên</em> đường biên, nơi một hàm <code>contains()</code> nghiêm ngặt trả về <em>false</em> và nét nối bị loại nhầm - làm một vùng tô mượt vỡ thành nhiều nét rời. <b>Cách sửa:</b> trước khi kiểm tra trong/ngoài, hãy nhích điểm dò một chút (<code>≈ 0.25 · spacing</code>) về phía <b>tâm hộp bao</b> (bounding-box center, một tâm khối xấp xỉ rẻ tiền). Việc này giữ lại các nét nối biên hợp lệ và giữ vùng tô liền mạch.</p>
+
+    <figure>
+      <svg viewBox="0 0 700 260" width="700" role="img" aria-label="Nhích điểm dò biên về tâm hộp bao">
+        <g font-family="sans-serif">
+          <!-- region -->
+          <rect x="60" y="50" width="360" height="170" rx="4" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5"/>
+          <text x="80" y="72" font-size="12" fill="#8a94a6">Vùng tô</text>
+
+          <!-- hatch lines -->
+          <g stroke="#2563eb" stroke-width="2.5">
+            <path d="M90 90 H390"/>
+            <path d="M90 130 H390"/>
+            <path d="M90 170 H390"/>
+          </g>
+          <!-- boundary connector running ALONG the right edge -->
+          <path d="M390 90 V130" stroke="#2563eb" stroke-width="2.5"/>
+          <path d="M90 130 V170" stroke="#2563eb" stroke-width="2.5"/>
+
+          <!-- probe midpoint on the boundary (rejected) -->
+          <circle cx="420" cy="110" r="5" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="428" y="106" font-size="11" fill="#dc2626">điểm dò TRÊN biên</text>
+          <text x="428" y="122" font-size="11" fill="#dc2626">contains() = false ✗</text>
+
+          <!-- nudged point -->
+          <path d="M420 110 L 392 118" stroke="#7c3aed" stroke-width="1.6" marker-end="url(#arn)"/>
+          <circle cx="388" cy="120" r="5" fill="#7c3aed"/>
+          <text x="300" y="205" font-size="11" fill="#7c3aed">nhích ≈0.25·spacing về tâm bbox → contains() = true ✓</text>
+
+          <!-- bbox center -->
+          <circle cx="240" cy="135" r="3.5" fill="none" stroke="#8a94a6" stroke-width="1.5"/>
+          <path d="M240 135 m-9 0 h18 M240 135 m0 -9 v18" stroke="#8a94a6" stroke-width="1"/>
+          <text x="240" y="152" text-anchor="middle" font-size="10.5" fill="#8a94a6">tâm hộp bao</text>
+
+          <!-- spacing marker -->
+          <path d="M470 90 V130" stroke="#94a3b8" stroke-width="1"/>
+          <path d="M466 90 h8 M466 130 h8" stroke="#94a3b8" stroke-width="1"/>
+          <text x="478" y="114" font-size="11" fill="#8a94a6">spacing</text>
+
+          <defs>
+            <marker id="arn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+            </marker>
+          </defs>
+        </g>
+      </svg>
+      <figcaption>Điểm giữa của nét nối chạy dọc cạnh phải nằm đúng <em>trên</em> biên, nơi <code>contains()</code> trả về false và loại nhầm nét nối. Nhích nó một khoảng <code>≈ 0.25·spacing</code> về tâm hộp bao đưa điểm dò vào hẳn trong vùng, phép kiểm trả true, và vùng tô giữ được liền mạch.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Caveat: vùng lõm hoặc có lỗ</span>
+      <p>Tâm hộp bao chỉ là điểm tham chiếu bên trong hợp lệ với các vùng <em>lồi-ish</em>. Trên vùng lõm hoặc có lỗ, tâm này có thể nằm ngoài vật liệu; khi đó cú nhích chỉ khiến phép kiểm <em>nghiêng về loại bỏ</em> nét nối - điều này <em>an toàn</em> vì nó không bao giờ hợp thức hoá một nét băng qua khe hở. Xem <a href="03-thuat-toan-to.html">Ch. 3 §3.3</a> để có phương án dự phòng kiểm tra cục bộ.</p>
+    </div>
+
+    <h3 id="s35">3.5 Nối các mảnh thành nét chảy</h3>
+    <p>Truy vết xương (skeleton tracing) và trích xuất theo từng đoạn tự nhiên sinh ra nhiều mảnh. Hãy nối lại chúng tại các điểm cuối chung theo nguyên tắc <b>tiếp nối thẳng nhất</b> (straightest continuation: tích vô hướng hướng đi lớn nhất, góc rẽ &lt; 90°), để một mớ mảnh vụn trở thành một vài nét chảy trơn (<a href="05-chu-net-don.html">Ch. 5 §3.5</a>). Kết quả là các nét liên tục G¹, giảm hẳn số lần nhấc bút.</p>
+
+    <h2 id="s4">4. Làm trơn polyline sinh ra (diệt rung lượn &amp; bậc thang)</h2>
+    <p>Một số nguồn chuỗi (xương raster, ảnh bitmap truy vết) sinh ra vốn đã gồ ghề. Hãy áp dụng ba bước theo <b>đúng thứ tự</b> này: khử nhiễu → giảm dư → bo tròn.</p>
+
+    <div class="steps">
+      <span class="step">1 · Moving average [1,2,1]/4</span>
+      <span class="arrow">→</span>
+      <span class="step">2 · Douglas–Peucker</span>
+      <span class="arrow">→</span>
+      <span class="step">3 · Chaikin</span>
+    </div>
+
+    <div class="kv">
+      <div><dt>1 · Lọc thông thấp trung bình động</dt><dd><b>Moving-average low-pass</b> (<code>[1,2,1]/4</code>, vài lượt) - xoá rung lượn bậc thang ±1 mẫu. Ghim (pin) điểm đầu/cuối của đường hở; gói vòng (wrap) với vòng kín.</dd></div>
+      <div><dt>2 · Đơn giản hoá</dt><dd><b>Douglas–Peucker</b> ở dung sai nhỏ - bỏ các điểm dư thẳng hàng mà <em>không</em> đổi hình dạng (ít điểm hơn = dòng phát nhanh hơn, không mất chất lượng).</dd></div>
+      <div><dt>3 · Cắt góc bo tròn</dt><dd><b>Chaikin</b> (1–2 lượt) - bo các góc còn lại thành đường cong trơn.</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 250" width="720" role="img" aria-label="Chuỗi làm trơn ba bước: trung bình động, Douglas-Peucker, Chaikin">
+        <g font-family="sans-serif">
+          <!-- 0 raw -->
+          <text x="110" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#dc2626">0 · Thô (bậc thang)</text>
+          <polyline points="30,150 45,120 42,122 60,90 57,92 78,70 95,72 118,50 140,52 165,40 190,42"
+                    fill="none" stroke="#dc2626" stroke-width="2" stroke-linejoin="round"/>
+          <g fill="#dc2626"><circle cx="30" cy="150" r="2"/><circle cx="45" cy="120" r="2"/><circle cx="60" cy="90" r="2"/><circle cx="78" cy="70" r="2"/><circle cx="95" cy="72" r="2"/><circle cx="118" cy="50" r="2"/><circle cx="140" cy="52" r="2"/><circle cx="165" cy="40" r="2"/><circle cx="190" cy="42" r="2"/></g>
+
+          <!-- 1 moving average -->
+          <text x="360" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#d97706">1 · Trung bình động</text>
+          <polyline points="270,150 288,118 308,92 330,72 353,60 378,50 400,44 425,42 440,42"
+                    fill="none" stroke="#d97706" stroke-width="2.2" stroke-linejoin="round"/>
+          <text x="360" y="168" text-anchor="middle" font-size="10.5" fill="#8a94a6">hết rung, vẫn còn dư điểm</text>
+
+          <!-- 2 DP -->
+          <text x="610" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#2563eb">2 · Douglas–Peucker</text>
+          <polyline points="520,150 560,88 610,52 690,42" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round"/>
+          <g fill="#2563eb"><circle cx="520" cy="150" r="2.6"/><circle cx="560" cy="88" r="2.6"/><circle cx="610" cy="52" r="2.6"/><circle cx="690" cy="42" r="2.6"/></g>
+          <text x="610" y="168" text-anchor="middle" font-size="10.5" fill="#8a94a6">bỏ điểm dư, giữ hình</text>
+
+          <!-- 3 Chaikin -->
+          <text x="360" y="205" text-anchor="middle" font-size="12.5" font-weight="700" fill="#16a34a">3 · Chaikin → nét mượt cuối</text>
+          <path d="M270 240 C 300 190, 330 172, 380 168 C 430 164, 470 178, 490 200" fill="none" stroke="#16a34a" stroke-width="2.6"/>
+          <text x="360" y="234" text-anchor="middle" font-size="10.5" fill="#8a94a6" opacity="0"> </text>
+        </g>
+      </svg>
+      <figcaption>Thứ tự bắt buộc: <b>làm trơn</b> (khử nhiễu bậc thang) → <b>đơn giản hoá</b> (bỏ điểm dư) → <b>bo tròn</b> (làm đẹp). Đơn giản hoá <em>trước</em> khi làm trơn sẽ khoá cứng bậc thang lại; bo tròn <em>trước</em> khi đơn giản hoá thì phí công.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Cẩn trọng với over-smoothing</span>
+      <p>Làm trơn quá tay sẽ <em>co nhỏ</em> hình và bo mất các góc nhọn có chủ đích. Giữ dung sai nhỏ và số lượt ít. Khi một hình có góc nhọn <em>cố ý</em>, một bộ làm trơn bảo toàn góc (angle-thresholded) đánh bại hẳn Chaikin áp dụng đại trà.</p>
+    </div>
+
+    <h2 id="s5">5. Mật độ điểm đồng đều</h2>
+    <p>Các đoạn dài ngắn quá chênh lệch khiến bộ hoạch định chuyển động (motion planner) của bộ điều khiển lúc vọt lúc khựng (một nét dài rồi một loạt nét tí hon), <em>trông</em> như gồ ghề dù hình học vốn mượt. Hai cách giảm nhẹ:</p>
+    <ul>
+      <li>Làm phẳng thích nghi đã dàn điểm theo độ cong - đúng là thứ ta cần.</li>
+      <li>Tuỳ chọn <b>lấy mẫu lại</b> (resample) một chuỗi về một độ dài đoạn tối đa trên các đoạn thẳng dài, để tốc độ ăn dao (feed) giữ đều. Cân đối với kích thước đầu ra.</li>
+    </ul>
+
+    <h2 id="s6">6. Khớp cung tròn (tuỳ chọn, cấp cao)</h2>
+    <p>Thay vì nhiều đoạn thẳng ngắn, hãy <b>khớp các cung tròn</b> vào các đoạn trơn và phát các lệnh cung gốc (<b>G-code G2/G3</b>; HPGL <code>AA/AR/CI</code>).</p>
+
+    <figure>
+      <svg viewBox="0 0 700 210" width="700" role="img" aria-label="Khớp cung thay cho nhiều đoạn thẳng">
+        <g font-family="sans-serif">
+          <text x="175" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">Nhiều đoạn thẳng</text>
+          <polyline points="40,170 55,132 80,100 115,78 158,66 205,66 250,80 285,104"
+                    fill="none" stroke="#d97706" stroke-width="2.2" stroke-linejoin="round"/>
+          <g fill="#d97706"><circle cx="40" cy="170" r="2.6"/><circle cx="55" cy="132" r="2.6"/><circle cx="80" cy="100" r="2.6"/><circle cx="115" cy="78" r="2.6"/><circle cx="158" cy="66" r="2.6"/><circle cx="205" cy="66" r="2.6"/><circle cx="250" cy="80" r="2.6"/><circle cx="285" cy="104" r="2.6"/></g>
+          <text x="175" y="196" text-anchor="middle" font-size="11" fill="#8a94a6">hàng chục đỉnh, còn nguy cơ mặt phẳng</text>
+
+          <text x="530" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Một cung G2/G3</text>
+          <path d="M400 170 A150 150 0 0 1 645 104" fill="none" stroke="#16a34a" stroke-width="2.8"/>
+          <g fill="#16a34a"><circle cx="400" cy="170" r="3"/><circle cx="645" cy="104" r="3"/></g>
+          <text x="530" y="196" text-anchor="middle" font-size="11" fill="#8a94a6">một lệnh, cong tuyệt đối, đầu ra nhỏ</text>
+        </g>
+      </svg>
+      <figcaption>Bộ điều khiển nội suy một cung <em>thật</em>: không mặt phẳng hoá bất kể tốc độ ăn dao, và một cung thay cho hàng chục đoạn nên đầu ra nhỏ hơn nhiều, look-ahead sâu hơn (<a href="11-hieu-nang.html">Ch. 11</a>).</figcaption>
+    </figure>
+
+    <p>Chi phí: khớp cung (ví dụ <b>biarc fitting</b> vào các đoạn Bézier) phức tạp hơn, và không phải bộ điều khiển nào cũng hỗ trợ cung tốt. Hãy dùng làm phẳng thành đoạn thẳng làm phương án mặc định bền vững, và khớp cung như một tối ưu ở nơi ngôn ngữ đích hỗ trợ. <b>Từ khoá:</b> <em>biarc/arc fitting, G2/G3 arc interpolation</em>.</p>
+
+    <h2 id="s7">7. Tránh răng cưa do làm tròn số nguyên khi phát mã</h2>
+    <p>Một số ngôn ngữ dùng đơn vị thiết bị nguyên (ví dụ HPGL: 40 đơn vị/mm). Làm tròn từng điểm một cách độc lập có thể tái tạo một bậc thang mảnh trên các đường chéo thoải. Giảm nhẹ bằng hai điều:</p>
+    <ul>
+      <li>Phát ở <b>đơn vị thiết bị mịn nhất</b> có sẵn (40 đơn vị/mm ≈ bước 0.025 mm, nằm dưới độ phân giải công cụ nên chấp nhận được).</li>
+      <li>Giữ toàn bộ hình học ở dấu phẩy động theo mm và <b>chỉ làm tròn ở bước <code>format()</code> cuối cùng</b> (<a href="08-sinh-ma.html">Ch. 8 §4</a>) - không bao giờ làm tròn giữa pipeline rồi tiếp tục tính toán trên các giá trị đã tròn (sai số sẽ tích luỹ thành trôi lệch/khe hở nhìn thấy được).</li>
+    </ul>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Quy tắc vàng: tính bằng float, chỉ tròn khi phát</span>
+      <p>Mọi phép tính trong pipeline giữ ở dấu phẩy động theo mm. Việc làm tròn về đơn vị thiết bị là <em>bước cuối cùng</em> và <em>chỉ một lần</em>, ngay tại <code>format()</code>. Đây là cách chắc chắn nhất để sai số làm tròn không cộng dồn thành lệch hình.</p>
+    </div>
+
+    <h2 id="s8">8. Danh mục kiểm (AI bảo vệ chất lượng đường cong)</h2>
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Checklist chất lượng</span>
+      <ul>
+        <li>Làm phẳng với dung sai theo không gian thế giới ≈ 0.02 mm (thủ thuật phóng to hoặc chia nhỏ thích nghi); một routine, một chính sách.</li>
+        <li>Ưu tiên chia nhỏ thích nghi theo độ cong hơn bước đều.</li>
+        <li>Hàn các điểm cuối trùng nhau; đóng vòng tường minh (kiểm tra ε).</li>
+        <li>Gộp các đoạn xén liền mạch; đừng phát vi-chuỗi theo từng mảnh.</li>
+        <li>Nhích điểm dò biên về tâm hộp bao để nét nối biên sống sót.</li>
+        <li>Nối các mảnh theo tiếp nối thẳng nhất (G¹) thành nét chảy.</li>
+        <li>Làm trơn → đơn giản hoá → bo tròn, dung sai nhỏ, tôn trọng góc.</li>
+        <li>Chỉ làm tròn về đơn vị thiết bị khi phát mã; tính bằng float mm xuyên suốt.</li>
+        <li>Cân nhắc khớp cung ở nơi ngôn ngữ hỗ trợ G2/G3.</li>
+      </ul>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Đọc thêm liên quan</span>
+      <p>Nền tảng làm phẳng và kiểm tra ε ở <a href="02-hinh-hoc.html">Ch. 2</a>; nét nối và bộ tô ở <a href="03-thuat-toan-to.html">Ch. 3</a>; nối mảnh xương ở <a href="05-chu-net-don.html">Ch. 5</a>; định dạng toạ độ và làm tròn ở <a href="08-sinh-ma.html">Ch. 8</a>; đánh đổi số điểm với tốc độ dòng ở <a href="11-hieu-nang.html">Ch. 11</a>.</p>
+    </div>
+
+    <div class="pager">
+      <a href="09-raster.html"><div class="dir">← Trước</div><div class="ttl">9 · Khắc Raster (ảnh bitmap)</div></a>
+      <a class="next" href="11-hieu-nang.html"><div class="dir">Chương tiếp →</div><div class="ttl">11 · Hiệu năng &amp; Độ phức tạp</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

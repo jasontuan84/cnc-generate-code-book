@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>6 · Pattern, Texture &amp; Shade Fill - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 6 · Pattern</span>
+    <h1>Pattern, Texture &amp; Shade Fill</h1>
+    <p class="lead">Beyond a plain solid fill (<a href="03-fill-algorithms.html">Ch. 3</a>), a shape may be filled with a <b>decorative pattern</b> (lines, grid, weave, brick, dots, wave, …) that should be reproduced <em>literally</em> on the machine, or shaded with a <b>tone/level</b> that maps to fill density. This chapter covers both, and how they interact with the solid-fill engine.</p>
+
+    <h2>1. Three kinds of "fill" - pick the right path</h2>
+    <p>When a shape has a fill attribute, the first step is to <b>classify</b> it before generating chains:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Fill kind</th><th>Detection</th><th>Chain source</th></tr></thead>
+      <tbody>
+        <tr><td><b>Solid</b></td><td>Pattern is empty / "solid" sentinel</td><td><b>Fill engine</b> - Auto strategy (<a href="03-fill-algorithms.html">Ch. 3</a>)</td></tr>
+        <tr><td><b>Simple hatch look</b></td><td>Pattern is a line/grid family (line-h, line-v, diagonal, grid, cross)</td><td><b>Hatch</b> at the pattern's angle set</td></tr>
+        <tr><td><b>Decorative texture</b></td><td>Pattern has real repeating stroke geometry (weave, brick, wave, circles…)</td><td><b>Pattern tiling &amp; clip</b> (this chapter)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Three fill kinds: solid, simple hatch look, decorative texture">
+        <defs>
+          <clipPath id="clipA"><circle cx="120" cy="112" r="72"/></clipPath>
+          <clipPath id="clipB"><circle cx="360" cy="112" r="72"/></clipPath>
+          <clipPath id="clipC"><circle cx="600" cy="112" r="72"/></clipPath>
+          <pattern id="pDense" width="5" height="5" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="0" y2="5" stroke="#2563eb" stroke-width="2.4"/>
+          </pattern>
+          <pattern id="pHatch" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="22" stroke="#2563eb" stroke-width="2.6"/>
+          </pattern>
+          <pattern id="pTex" width="18" height="18" patternUnits="userSpaceOnUse">
+            <circle cx="9" cy="9" r="3.4" fill="none" stroke="#2563eb" stroke-width="1.8"/>
+          </pattern>
+        </defs>
+
+        <circle cx="120" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipA)"><rect x="48" y="40" width="144" height="144" fill="url(#pDense)"/></g>
+        <circle cx="120" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="120" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Solid (Auto)</text>
+        <text x="120" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">fill engine, fastest path</text>
+
+        <circle cx="360" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipB)"><rect x="288" y="40" width="144" height="144" fill="url(#pHatch)"/></g>
+        <circle cx="360" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="360" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Simple hatch look</text>
+        <text x="360" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">disjoint parallel lines</text>
+
+        <circle cx="600" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipC)"><rect x="528" y="40" width="144" height="144" fill="url(#pTex)"/></g>
+        <circle cx="600" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="600" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Decorative texture</text>
+        <text x="600" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">real repeating stroke geometry (e.g. dots)</text>
+      </svg>
+      <figcaption>All three fill kinds look alike in that they "cover" a shape, but their <b>underlying geometry</b> is completely different: solid is a closed chain optimised for speed, hatch is disjoint parallel lines, and texture is a repeated tile reproduced as-is.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Why classify first</span>
+      <p>A solid fill should be drawn the <b>fastest</b> way (Auto), while a decorative texture must be reproduced <em>exactly as drawn on screen</em> - its geometry <em>is</em> its identity, so it cannot be substituted with a faster strategy that produces a different shape.</p>
+    </div>
+
+    <h2>2. Simple line/grid patterns → hatch angle sets</h2>
+    <p>The line/grid pattern family maps to a small set of <b>hatch angles</b>; generate one Hatch pass (<a href="03-fill-algorithms.html">Ch. 3 §3.1</a>) per angle:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Pattern</th><th>Angle set (deg)</th></tr></thead>
+      <tbody>
+        <tr><td>horizontal line / dash-h</td><td><code>{0}</code></td></tr>
+        <tr><td>vertical line / dash-v</td><td><code>{90}</code></td></tr>
+        <tr><td>forward diagonal</td><td><code>{45}</code></td></tr>
+        <tr><td>back diagonal</td><td><code>{-45}</code></td></tr>
+        <tr><td>grid / plus / lattice / plaid / weave</td><td><code>{0, 90}</code></td></tr>
+        <tr><td>diagonal grid / cross</td><td><code>{45, -45}</code></td></tr>
+        <tr><td>(anything else)</td><td><code>{45}</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>Then add the shape's <b>pattern rotation</b> (<code>angle + patternAngle</code>) to every angle in the set, so the whole set rotates together with the user's setting. Spacing between lines comes from the job's hatch interval (or the shade mapping, §4). These are <em>deliberately disjoint</em> hatch lines - the look depends on those parallel lines existing exactly as such, never rejoined.</p>
+
+    <figure>
+      <svg viewBox="0 0 420 300" width="420" role="img" aria-label="Hatch angle set rotating with patternAngle">
+        <circle cx="210" cy="140" r="108" fill="#fdfbf6" stroke="#e6ded0"/>
+        <!-- base angle set {0,90} dashed grey -->
+        <line x1="102" y1="140" x2="318" y2="140" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <line x1="210" y1="32" x2="210" y2="248" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <!-- rotated set +25deg solid blue -->
+        <g stroke="#2563eb" stroke-width="2.6">
+          <line x1="112.1" y1="185.6" x2="307.9" y2="94.4"/>
+          <line x1="255.6" y1="237.9" x2="164.4" y2="42.1"/>
+        </g>
+        <!-- angle arc -->
+        <path d="M 258 140 A 48 48 0 0 0 249.6 96.7" fill="none" stroke="#7c3aed" stroke-width="2"/>
+        <text x="272" y="112" font-size="12" fill="#7c3aed" font-family="sans-serif" font-weight="700">patternAngle</text>
+        <circle cx="210" cy="140" r="3.4" fill="#1a2230"/>
+        <text x="210" y="20" text-anchor="middle" font-size="12" fill="#94a3b8" font-family="sans-serif">base angle set {0°, 90°} (e.g. grid)</text>
+        <text x="210" y="285" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">actual angle = base angle + patternAngle</text>
+      </svg>
+      <figcaption>The pattern's base angle set (dashed grey) has <code>patternAngle</code> added to produce the actual angle set (solid blue) - the whole set rotates <em>together</em> as one rigid body.</figcaption>
+    </figure>
+
+    <h2>3. Decorative texture: tile &amp; clip</h2>
+    <p>A texture is defined once as <b>tile geometry</b>: a set of stroke polylines inside a repeating rectangular cell (<code>tileW × tileH</code>, in the texture's own pixel space). To fill a shape with it, we must reproduce <em>exactly</em> the brush as seen on screen:</p>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Tile</span>
+      <p>The smallest geometric unit of a texture, containing one or more stroke polylines, repeated regularly on a <code>tileW × tileH</code> grid to cover any area - exactly the way an editor renders a repeating brush on screen.</p>
+    </div>
+
+    <pre><code><span class="cm">// Step 1: compute the tile → shape transform</span>
+<span class="kw">scale</span>  = texBase × patternScale / shapeScale   <span class="cm">// match on-screen brush size</span>
+<span class="kw">rotate</span> = patternAngle
+<span class="cm">// (texBase is the fixed base brush scale; shapeScale removes the shape's own
+//  scaling so the texture size stays stable regardless of shape size)</span>
+
+<span class="cm">// Step 2: map the shape's bounding box back into tile-pixel space (inverse transform)</span>
+<span class="kw">for</span> i <span class="kw">in</span> [i0..i1], j <span class="kw">in</span> [j0..j1]:   <span class="cm">// tile indices that can overlap the shape</span>
+    <span class="kw">if</span> tileCount <span class="kw">is implausibly large</span>: <span class="fn">bailOut</span>()   <span class="cm">// fallback: caller reverts to a plain fill</span>
+
+<span class="cm">// Step 3: for each tile (i, j), for each stroke polyline in the tile</span>
+<span class="kw">for</span> each stroke <span class="kw">in</span> tile:
+    stroke' = <span class="fn">translate</span>(stroke, i·tileW, j·tileH)
+    stroke' = <span class="fn">applyTransform</span>(stroke', scale, rotate)
+    runs    = <span class="fn">clipToShapeInterior</span>(stroke')   <span class="cm">// segment-polygon clip, see Ch.2 §6</span>
+    <span class="fn">append</span>(chains, runs)</code></pre>
+
+    <p>Result: the texture's strokes are tiled across the shape and clipped to its exact boundary - pixel-for-pixel the same as the rendered brush, so the preview and the machine output always agree. Work in the shape's <b>local</b> space, then map local→world→machine at emission.</p>
+
+    <figure>
+      <svg viewBox="0 0 640 300" width="640" role="img" aria-label="Tile geometry laid over the shape, then clipped to its boundary">
+        <defs>
+          <clipPath id="clipShape">
+            <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z"/>
+          </clipPath>
+        </defs>
+        <!-- Panel A: grid over shape, before clip -->
+        <g>
+          <text x="140" y="24" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">1-2 · Tile grid over the bounding box</text>
+          <g stroke="#d9cdb4" stroke-width="1" stroke-dasharray="3 3">
+            <line x1="0" y1="40" x2="280" y2="40"/><line x1="0" y1="70" x2="280" y2="70"/>
+            <line x1="0" y1="100" x2="280" y2="100"/><line x1="0" y1="130" x2="280" y2="130"/>
+            <line x1="0" y1="160" x2="280" y2="160"/><line x1="0" y1="190" x2="280" y2="190"/><line x1="0" y1="220" x2="280" y2="220"/>
+            <line x1="10" y1="10" x2="10" y2="240"/><line x1="40" y1="10" x2="40" y2="240"/><line x1="70" y1="10" x2="70" y2="240"/>
+            <line x1="100" y1="10" x2="100" y2="240"/><line x1="130" y1="10" x2="130" y2="240"/><line x1="160" y1="10" x2="160" y2="240"/>
+            <line x1="190" y1="10" x2="190" y2="240"/><line x1="220" y1="10" x2="220" y2="240"/><line x1="250" y1="10" x2="250" y2="240"/>
+          </g>
+          <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4"/>
+          <g stroke="#94a3b8" stroke-width="1.6">
+            <path d="M17 47 L33 63 M33 47 L17 63"/><path d="M47 47 L63 63 M63 47 L47 63"/><path d="M77 47 L93 63 M93 47 L77 63"/><path d="M107 47 L123 63 M123 47 L107 63"/><path d="M137 47 L153 63 M153 47 L137 63"/><path d="M167 47 L183 63 M183 47 L167 63"/><path d="M197 47 L213 63 M213 47 L197 63"/>
+            <path d="M17 77 L33 93 M33 77 L17 93"/><path d="M47 77 L63 93 M63 77 L47 93"/><path d="M77 77 L93 93 M93 77 L77 93"/><path d="M107 77 L123 93 M123 77 L107 93"/><path d="M137 77 L153 93 M153 77 L137 93"/><path d="M167 77 L183 93 M183 77 L167 93"/><path d="M197 77 L213 93 M213 77 L197 93"/>
+            <path d="M17 107 L33 123 M33 107 L17 123"/><path d="M47 107 L63 123 M63 107 L47 123"/><path d="M77 107 L93 123 M93 107 L77 123"/><path d="M107 107 L123 123 M123 107 L107 123"/><path d="M137 107 L153 123 M153 107 L137 123"/><path d="M167 107 L183 123 M183 107 L167 123"/><path d="M197 107 L213 123 M213 107 L197 123"/>
+            <path d="M17 137 L33 153 M33 137 L17 153"/><path d="M47 137 L63 153 M63 137 L47 153"/><path d="M77 137 L93 153 M93 137 L77 153"/><path d="M107 137 L123 153 M123 137 L107 153"/><path d="M137 137 L153 153 M153 137 L137 153"/><path d="M167 137 L183 153 M183 137 L167 153"/><path d="M197 137 L213 153 M213 137 L197 153"/>
+            <path d="M17 167 L33 183 M33 167 L17 183"/><path d="M47 167 L63 183 M63 167 L47 183"/><path d="M77 167 L93 183 M93 167 L77 183"/><path d="M107 167 L123 183 M123 167 L107 183"/><path d="M137 167 L153 183 M153 167 L137 183"/><path d="M167 167 L183 183 M183 167 L167 183"/><path d="M197 167 L213 183 M213 167 L197 183"/>
+            <path d="M17 197 L33 213 M33 197 L17 213"/><path d="M47 197 L63 213 M63 197 L47 213"/><path d="M77 197 L93 213 M93 197 L77 213"/><path d="M107 197 L123 213 M123 197 L107 213"/><path d="M137 197 L153 213 M153 197 L137 213"/><path d="M167 197 L183 213 M183 197 L167 213"/><path d="M197 197 L213 213 M213 197 L197 213"/>
+          </g>
+        </g>
+        <!-- arrow -->
+        <path d="M300 140 L340 140" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#arT)"/>
+        <text x="320" y="128" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif" font-weight="700">clip</text>
+        <!-- Panel B: clipped result -->
+        <g transform="translate(360,0)">
+          <text x="140" y="24" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">3 · Result after clipping to the boundary</text>
+          <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z" fill="#f3ede1" stroke="#2563eb" stroke-width="2.4"/>
+          <g clip-path="url(#clipShape)" stroke="#2563eb" stroke-width="1.8">
+            <path d="M17 47 L33 63 M33 47 L17 63"/><path d="M47 47 L63 63 M63 47 L47 63"/><path d="M77 47 L93 63 M93 47 L77 63"/><path d="M107 47 L123 63 M123 47 L107 63"/><path d="M137 47 L153 63 M153 47 L137 63"/><path d="M167 47 L183 63 M183 47 L167 63"/><path d="M197 47 L213 63 M213 47 L197 63"/>
+            <path d="M17 77 L33 93 M33 77 L17 93"/><path d="M47 77 L63 93 M63 77 L47 93"/><path d="M77 77 L93 93 M93 77 L77 93"/><path d="M107 77 L123 93 M123 77 L107 93"/><path d="M137 77 L153 93 M153 77 L137 93"/><path d="M167 77 L183 93 M183 77 L167 93"/><path d="M197 77 L213 93 M213 77 L197 93"/>
+            <path d="M17 107 L33 123 M33 107 L17 123"/><path d="M47 107 L63 123 M63 107 L47 123"/><path d="M77 107 L93 123 M93 107 L77 123"/><path d="M107 107 L123 123 M123 107 L107 123"/><path d="M137 107 L153 123 M153 107 L137 123"/><path d="M167 107 L183 123 M183 107 L167 123"/><path d="M197 107 L213 123 M213 107 L197 123"/>
+            <path d="M17 137 L33 153 M33 137 L17 153"/><path d="M47 137 L63 153 M63 137 L47 153"/><path d="M77 137 L93 153 M93 137 L77 153"/><path d="M107 137 L123 153 M123 137 L107 153"/><path d="M137 137 L153 153 M153 137 L137 153"/><path d="M167 137 L183 153 M183 137 L167 153"/><path d="M197 137 L213 153 M213 137 L197 153"/>
+            <path d="M17 167 L33 183 M33 167 L17 183"/><path d="M47 167 L63 183 M63 167 L47 183"/><path d="M77 167 L93 183 M93 167 L77 183"/><path d="M107 167 L123 183 M123 167 L107 183"/><path d="M137 167 L153 183 M153 167 L137 183"/><path d="M167 167 L183 183 M183 167 L167 183"/><path d="M197 167 L213 183 M213 167 L197 183"/>
+            <path d="M17 197 L33 213 M33 197 L17 213"/><path d="M47 197 L63 213 M63 197 L47 213"/><path d="M77 197 L93 213 M93 197 L77 213"/><path d="M107 197 L123 213 M123 197 L107 213"/><path d="M137 197 L153 213 M153 197 L137 213"/><path d="M167 197 L183 213 M183 197 L167 213"/><path d="M197 197 L213 213 M213 197 L197 213"/>
+          </g>
+        </g>
+        <defs>
+          <marker id="arT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Left: the tile grid (dashed) containing sample strokes (X marks) covers the whole bounding box, extending past the shape's boundary. Right: after <b>clipping</b> to the boundary (segment-polygon clip), only the strokes falling inside the shape are kept and become chains.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Critical detail: the scale must match the on-screen brush</span>
+      <p>The tile→shape transform <b>must</b> use the exact on-screen brush scale: the same <code>texBase × patternScale / shapeScale</code> formula. If this scale drifts, the generated machine code will <em>not match</em> the design - the texture will come out too big or too small compared to what the user approved on screen.</p>
+    </div>
+
+    <h2>4. Shade / tone via fill density</h2>
+    <p>Independently of <em>which kind</em> of pattern is used, a shape can also carry a <b>shade level</b>. As established in <a href="03-fill-algorithms.html">Ch. 3 §2</a>:</p>
+
+    <pre><code>spacing = shadeFactor(level) × lineWidth</code></pre>
+
+    <p>The darker the level, the smaller the factor, the tighter the lines, and the darker the result. A representative 4-level map:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Level</th><th>shadeFactor (× line width)</th></tr></thead>
+      <tbody>
+        <tr><td>Black</td><td><code>0.8</code></td></tr>
+        <tr><td>Dark</td><td><code>1.5</code></td></tr>
+        <tr><td>Gray</td><td><code>2.5</code></td></tr>
+        <tr><td>Light</td><td><code>5.0</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 210" width="640" role="img" aria-label="Same Auto strategy, four different fill densities">
+        <defs>
+          <clipPath id="s1"><rect x="20" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s2"><rect x="180" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s3"><rect x="340" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s4"><rect x="500" y="30" width="120" height="120"/></clipPath>
+        </defs>
+        <!-- Black 0.8x -->
+        <rect x="20" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s1)" stroke="#2563eb" stroke-width="3">
+          <line x1="10" y1="34" x2="150" y2="34"/><line x1="10" y1="41" x2="150" y2="41"/><line x1="10" y1="48" x2="150" y2="48"/><line x1="10" y1="55" x2="150" y2="55"/>
+          <line x1="10" y1="62" x2="150" y2="62"/><line x1="10" y1="69" x2="150" y2="69"/><line x1="10" y1="76" x2="150" y2="76"/><line x1="10" y1="83" x2="150" y2="83"/>
+          <line x1="10" y1="90" x2="150" y2="90"/><line x1="10" y1="97" x2="150" y2="97"/><line x1="10" y1="104" x2="150" y2="104"/><line x1="10" y1="111" x2="150" y2="111"/>
+          <line x1="10" y1="118" x2="150" y2="118"/><line x1="10" y1="125" x2="150" y2="125"/><line x1="10" y1="132" x2="150" y2="132"/><line x1="10" y1="139" x2="150" y2="139"/><line x1="10" y1="146" x2="150" y2="146"/>
+        </g>
+        <text x="80" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Black</text>
+        <text x="80" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">0.8x - tightest</text>
+
+        <!-- Dark 1.5x -->
+        <rect x="180" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s2)" stroke="#2563eb" stroke-width="3">
+          <line x1="170" y1="34" x2="310" y2="34"/><line x1="170" y1="46" x2="310" y2="46"/><line x1="170" y1="58" x2="310" y2="58"/><line x1="170" y1="70" x2="310" y2="70"/>
+          <line x1="170" y1="82" x2="310" y2="82"/><line x1="170" y1="94" x2="310" y2="94"/><line x1="170" y1="106" x2="310" y2="106"/><line x1="170" y1="118" x2="310" y2="118"/><line x1="170" y1="130" x2="310" y2="130"/><line x1="170" y1="142" x2="310" y2="142"/>
+        </g>
+        <text x="240" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Dark</text>
+        <text x="240" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">1.5x</text>
+
+        <!-- Gray 2.5x -->
+        <rect x="340" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s3)" stroke="#2563eb" stroke-width="3">
+          <line x1="330" y1="36" x2="470" y2="36"/><line x1="330" y1="54" x2="470" y2="54"/><line x1="330" y1="72" x2="470" y2="72"/>
+          <line x1="330" y1="90" x2="470" y2="90"/><line x1="330" y1="108" x2="470" y2="108"/><line x1="330" y1="126" x2="470" y2="126"/><line x1="330" y1="144" x2="470" y2="144"/>
+        </g>
+        <text x="400" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Gray</text>
+        <text x="400" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">2.5x</text>
+
+        <!-- Light 5.0x -->
+        <rect x="500" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s4)" stroke="#2563eb" stroke-width="3">
+          <line x1="490" y1="40" x2="630" y2="40"/><line x1="490" y1="70" x2="630" y2="70"/><line x1="490" y1="100" x2="630" y2="100"/><line x1="490" y1="130" x2="630" y2="130"/>
+        </g>
+        <text x="560" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Light</text>
+        <text x="560" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">5.0x - sparsest</text>
+      </svg>
+      <figcaption>All four cells use the <b>same strategy</b> (Auto's horizontal hatch) - only <code>spacing</code> changes with <code>shadeFactor</code>. The stroke shape stays identical, only the spacing changes, and the eye reads four different "gray levels."</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Two independent axes, never conflate them</span>
+      <p><b>Pattern / strategy</b> decides the <em>shape</em> of the fill lines. <b>Shade / density</b> decides the <em>spacing</em> between them. So "light gray solid via Auto" and "black solid via Auto" use the <em>same strategy</em>, only different spacing. "Architecture fill" (<a href="03-fill-algorithms.html">Ch. 3 §5</a>) is a special case: it fixes the <em>shape</em> to a plain hatch at lighter levels, leaving density alone to carry the shade.</p>
+    </div>
+
+    <h2>5. Colour / monochrome note</h2>
+    <p>For single-tool machines, the output is inherently <b>monochrome</b>: the tool either marks or it doesn't. On-screen colour (from a layer/theme ink) is purely a <b>display</b> concern; the generated toolpath carries no colour. Shade is expressed by <b>density</b>, not by any colour value.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">shade == density</span>
+      <p>Keep colour <b>entirely outside</b> the geometry. It only ever affects the preview rendering, never the generated chain of points.</p>
+    </div>
+
+    <h2>6. Interaction with the solid-fill engine</h2>
+    <p>The dispatch (<a href="01-architecture.html">Ch. 1 §4</a>) tries the following branches in order, for any shape that <b>has a fill</b>:</p>
+
+    <pre><code><span class="kw">if</span> pattern <span class="kw">is</span> decorative_texture <span class="kw">and</span> tiling.<span class="fn">producedStrokes</span>():
+    use pattern chains                          <span class="cm">// §3 - tile &amp; clip</span>
+<span class="kw">elif</span> pattern <span class="kw">is</span> solid:
+    use fill-engine chains, Auto or override     <span class="cm">// Ch.3</span>
+<span class="kw">else</span>:  <span class="cm">// simple hatch look, OR a texture that tiled empty</span>
+    use hatch chains at the pattern's angle set  <span class="cm">// §2</span></code></pre>
+
+    <p>The middle branch is where the <b>smart Auto fill</b> operates; it applies only to plain solid fills. Decorative textures deliberately bypass Auto (their appearance is the whole point). The final branch also acts as the <b>safety fallback</b> if a texture's tiling hits its cell-count cap and produces no strokes.</p>
+
+    <h2>7. Checklist (when generating code for pattern / shade fills)</h2>
+    <ol>
+      <li>Classify the fill: solid, simple hatch look, or decorative texture.</li>
+      <li>Solid → fill engine (Auto/override); density from the shade level.</li>
+      <li>Simple hatch → angle set + pattern rotation; density from hatch interval/shade level.</li>
+      <li>Texture → tile with the exact on-screen brush transform, clip to the shape, cap the tile count, fall back to hatch if empty.</li>
+      <li>Keep pattern-shape and shade-density as two independent axes.</li>
+      <li>Keep colour out of the geometry; shade == density.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">In short</span>
+      <p>Classify correctly before generating chains, honour the original geometry of a decorative texture, and keep the "shape" axis separate from the "density" axis - these three principles are enough to make every pattern and shade level come out of the machine exactly as designed on screen.</p>
+    </div>
+
+    <div class="pager">
+      <a href="05-centerline-text.html">
+        <div class="dir">← Previous</div>
+        <div class="ttl">5 · Single-Stroke (Centerline) Text</div>
+      </a>
+      <a class="next" href="07-toolpath-ordering.html">
+        <div class="dir">Next chapter →</div>
+        <div class="ttl">7 · Toolpath Ordering</div>
+      </a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

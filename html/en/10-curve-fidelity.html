@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 · Curve Fidelity &amp; Continuity - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html" class="active"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 10 · Quality</span>
+    <h1>Curve Fidelity &amp; Continuity</h1>
+    <p class="lead">The single most visible quality difference between a good generator and a bad one lies in how it handles <b>curves</b>. Quality output must satisfy three things at once: curves read as curves (no faceting), joins read as joins (no breaks), and the result stays faithful to the design within a controlled tolerance. This chapter collects every technique that protects those three properties, from curve flattening through chain assembly to the final emitted motion.</p>
+
+    <div class="cards">
+      <div class="card"><h4>Smooth</h4><p>Curves read as curves, not jagged polygons. No visible flat facets, no aliasing (<em>"không răng cưa"</em>).</p></div>
+      <div class="card"><h4>Continuous</h4><p>No gaps, no accidental breaks between segments that should be one flowing stroke (<em>"không đứt đoạn"</em>).</p></div>
+      <div class="card"><h4>Faithful</h4><p>The toolpath tracks the design within a controlled tolerance - no missing tips (<em>"mất nét"</em>), no bloating or distortion.</p></div>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Applies to every chain source</span>
+      <p>The principles here apply to <em>all</em> chain-generating sources: fill, outline, text, pattern. Wherever a chain comes from, all three properties above must be protected uniformly.</p>
+    </div>
+
+    <h2>1. Where jaggedness and breaks come from</h2>
+    <p>Before fixing anything, classify the symptom and trace it back to its root cause. Nearly every curve-quality defect falls into one of seven groups below, each with a specific fix in the sections that follow.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Symptom</th><th>Root cause</th><th>Fixed in</th></tr></thead>
+      <tbody>
+        <tr><td><b>Faceted curves</b> (visible flat segments)</td><td>Flattening tolerance too coarse for the actual scale</td><td><a href="#s2">§2</a></td></tr>
+        <tr><td><b>Staircase aliasing</b> on diagonal lines</td><td>Skeleton/raster steps not smoothed; or integer rounding</td><td><a href="#s4">§4</a>, <a href="#s7">§7</a></td></tr>
+        <tr><td><b>Wobble</b> along a stroke that should be smooth</td><td>±1-sample noise (raster skeleton) not low-passed</td><td><a href="#s4">§4</a></td></tr>
+        <tr><td><b>Gap</b> between two segments that should join</td><td>Two endpoints differ by &gt; ε and are never welded</td><td><a href="#s3">§3.1</a></td></tr>
+        <tr><td><b>One fill that should be a single stroke splits into many</b></td><td>A valid connector rejected by an overly strict inside/outside test</td><td><a href="#s3">§3.4</a></td></tr>
+        <tr><td><b>Loop not closed</b></td><td>First/last vertex differ by &gt; ε; closing vertex dropped</td><td><a href="#s3">§3.2</a></td></tr>
+        <tr><td><b>Corner rounded off</b></td><td>Over-smoothing, or the tool's drag-offset trailing behaviour</td><td><a href="#s4">§4</a></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 250" width="720" role="img" aria-label="Six curve-defect symptoms, small illustrations">
+        <g font-family="sans-serif">
+          <!-- 1 faceting -->
+          <text x="90" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Faceting</text>
+          <polyline points="30,90 55,55 95,45 130,62 150,95" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M30 90 C 55 45, 130 45, 150 95" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 2 staircase -->
+          <text x="270" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Staircase</text>
+          <path d="M210 95 H235 V80 H258 V65 H281 V50 H305 V40" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M210 95 L305 40" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 3 wobble -->
+          <text x="450" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Wobble</text>
+          <polyline points="390,68 405,62 418,70 432,60 447,69 461,61 475,70 489,62 505,68" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M390 65 H505" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- 4 gap -->
+          <text x="630" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Gap</text>
+          <path d="M570 90 L618 52" stroke="#2563eb" stroke-width="2.5"/>
+          <path d="M628 48 L690 60" stroke="#2563eb" stroke-width="2.5"/>
+          <circle cx="618" cy="52" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+          <circle cx="628" cy="48" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+
+          <!-- 5 open loop -->
+          <text x="150" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Loop not closed</text>
+          <path d="M120 210 A38 38 0 1 1 128 176" fill="none" stroke="#dc2626" stroke-width="2.5"/>
+          <circle cx="120" cy="210" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+          <circle cx="128" cy="176" r="3.5" fill="none" stroke="#dc2626" stroke-width="1.5"/>
+
+          <!-- 6 rounded corner -->
+          <text x="400" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">Corner rounded off</text>
+          <path d="M330 215 L400 175 Q412 168 420 182 L470 215" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <path d="M330 215 L406 172 L470 215" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>
+          <circle cx="406" cy="172" r="3" fill="#94a3b8"/>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#dc2626"></i> Faulty result</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Intended shape</span>
+      </div>
+      <figcaption>Six common defects: the red stroke is the faulty output, the dashed grey stroke is the shape that should have resulted. Memorising their silhouettes speeds up diagnosis when looking at real output.</figcaption>
+    </figure>
+
+    <h2 id="s2">2. Flattening quality (the anti-facet foundation)</h2>
+    <p>A curve turns into line segments <em>exactly once</em>, at the flattening step. That is where smoothness is won or lost - poor flattening cannot be rescued by anything downstream.</p>
+
+    <h3>2.1 Control tolerance in world units</h3>
+    <p>A curve flattened with a tolerance fixed in <em>path units</em> facets badly once viewed at mm scale. Make the effective tolerance a real-world distance sitting below the tool's mark width. This is the <b>scale-up trick</b> (see <a href="02-geometry.html">Ch. 2 §1</a>): multiply the path by a factor <code>k</code> (e.g. <code>k ≈ 25</code>), flatten, then scale back down. The result is an effective tolerance <code>≈ libraryTolerance / k ≈ 0.02 mm</code>. At that size, facets are no longer physically resolvable, so the curve looks perfectly smooth.</p>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">flatness test</span>
+      <p>A Bézier span is considered "flat enough" once the deviation of its control points from the chord joining its two endpoints falls below tolerance. If not, subdivide the span (de Casteljau) and re-test each half.</p>
+    </div>
+
+    <h3>2.2 Prefer curvature-adaptive subdivision</h3>
+    <p>The best flatteners place <b>more points where curvature is high</b> and fewer on near-straight spans. This is <b>curvature-adaptive subdivision</b>: recursively subdividing a Bézier span (recursive de Casteljau subdivision) until the control-point deviation falls below tolerance. This approach gives a smooth curve <em>and</em> compact output at the same time. A uniform-step flattener wastes points on straight stretches while still being able to facet sharp corners - adaptive subdivision is strictly better.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 300" width="720" role="img" aria-label="Comparing coarse, fine, uniform-step and adaptive flattening">
+        <g font-family="sans-serif">
+          <!-- Panel A: coarse -->
+          <text x="120" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Coarse tolerance → faceted</text>
+          <path d="M30 130 C 60 40, 180 40, 210 130" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <polyline points="30,130 90,58 150,58 210,130" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round"/>
+          <g fill="#dc2626"><circle cx="30" cy="130" r="3.5"/><circle cx="90" cy="58" r="3.5"/><circle cx="150" cy="58" r="3.5"/><circle cx="210" cy="130" r="3.5"/></g>
+          <text x="120" y="152" text-anchor="middle" font-size="11" fill="#8a94a6">4 points - facets clearly visible</text>
+
+          <!-- Panel B: fine -->
+          <text x="360" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Fine tolerance → smooth</text>
+          <path d="M270 130 C 300 40, 420 40, 450 130" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M270 130 C 300 40, 420 40, 450 130" fill="none" stroke="#16a34a" stroke-width="2.5"/>
+          <g fill="#16a34a">
+            <circle cx="270" cy="130" r="2.5"/><circle cx="291" cy="97" r="2.5"/><circle cx="316" cy="72" r="2.5"/><circle cx="345" cy="58" r="2.5"/><circle cx="375" cy="55" r="2.5"/><circle cx="405" cy="62" r="2.5"/><circle cx="432" cy="86" r="2.5"/><circle cx="450" cy="130" r="2.5"/>
+          </g>
+          <text x="360" y="152" text-anchor="middle" font-size="11" fill="#8a94a6">many points - facets invisible</text>
+
+          <!-- lower: uniform vs adaptive -->
+          <text x="120" y="196" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">Uniform-step</text>
+          <path d="M30 285 C 70 200, 90 200, 100 250 C 108 288, 200 288, 210 210" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M30 285 C 70 200, 90 200, 100 250 C 108 288, 200 288, 210 210" fill="none" stroke="#d97706" stroke-width="2"/>
+          <g fill="#d97706">
+            <circle cx="30" cy="285" r="2.6"/><circle cx="52" cy="238" r="2.6"/><circle cx="74" cy="212" r="2.6"/><circle cx="96" cy="245" r="2.6"/><circle cx="118" cy="283" r="2.6"/><circle cx="150" cy="285" r="2.6"/><circle cx="182" cy="264" r="2.6"/><circle cx="210" cy="210" r="2.6"/>
+          </g>
+          <text x="120" y="298" text-anchor="middle" font-size="11" fill="#8a94a6">points spread evenly - wasted on straight bits</text>
+
+          <text x="360" y="196" text-anchor="middle" font-size="13" font-weight="700" fill="#7c3aed">Adaptive</text>
+          <path d="M270 285 C 310 200, 330 200, 340 250 C 348 288, 440 288, 450 210" fill="none" stroke="#e2e8f0" stroke-width="6"/>
+          <path d="M270 285 C 310 200, 330 200, 340 250 C 348 288, 440 288, 450 210" fill="none" stroke="#7c3aed" stroke-width="2"/>
+          <g fill="#7c3aed">
+            <circle cx="270" cy="285" r="2.6"/><circle cx="288" cy="235" r="2.6"/><circle cx="300" cy="215" r="2.6"/><circle cx="316" cy="212" r="2.6"/><circle cx="332" cy="235" r="2.6"/><circle cx="340" cy="250" r="2.6"/><circle cx="348" cy="270" r="2.6"/><circle cx="360" cy="284" r="2.6"/><circle cx="400" cy="286" r="2.6"/><circle cx="428" cy="262" r="2.6"/><circle cx="442" cy="232" r="2.6"/><circle cx="450" cy="210" r="2.6"/>
+          </g>
+          <text x="360" y="298" text-anchor="middle" font-size="11" fill="#8a94a6">dense where curvature is tight, sparse where near-straight</text>
+        </g>
+      </svg>
+      <figcaption>Top: the same curve - a coarse tolerance leaves facets visible (red), a fine tolerance is smooth (green). Bottom: uniform stepping spreads points evenly even along straight spans; <b>curvature-adaptive subdivision</b> concentrates points where curvature is sharp and saves points where the curve is nearly straight, giving the same smoothness with fewer points.</figcaption>
+    </figure>
+
+    <h3>2.3 The tolerance trade-off</h3>
+    <pre><code><span class="cm"># Two directions of trade-off</span>
+SMALLER tolerance → smoother curve, MORE points → bigger output, slower stream
+LARGER  tolerance → fewer points                → faceting</code></pre>
+    <p>Pick the tolerance as "just below the tool's mark width": <b>≈ 0.02 mm</b> as the fine default (<a href="02-geometry.html">Ch. 2 §1</a>), and <b>≈ 0.05 mm</b> as a coarser tier, acceptable only for boundaries used in <b>non-output decisions</b> (metrics, tile bounds, inside/outside tests).</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">The coarse 0.05 mm tier is never used for an emitted vertex</span>
+      <p>Never use the coarse tolerance for a boundary whose intersections become the endpoints of an emitted fill/pattern stroke, or that must align with an outline. Doing so reproduces exactly the misaligned seam this section warns against. Both figures are estimates tied to tool resolution, not hard constants. Do not shrink the tolerance arbitrarily either: beyond the tool's resolution you only add streaming load (<a href="11-performance.html">Ch. 11</a>) with zero visible gain.</p>
+    </div>
+
+    <h3>2.4 Keep a single source of truth</h3>
+    <p>Flatten every curve through <em>one</em> routine with <em>one</em> tolerance policy (a fine tolerance for anything the eye follows). If different features flatten at different tolerances, a fill line and the outline it meets won't align, producing visible seams.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">One routine, one policy</span>
+      <p>The "single source of truth" principle defends against both failures at once: uneven faceting <em>and</em> mismatched seams between features. Don't let each module pick its own tolerance.</p>
+    </div>
+
+    <h2 id="s3">3. Continuity: no gaps, no accidental breaks</h2>
+    <p>"Continuity" has two levels, borrowed from CAD's <b>geometric continuity</b> classes (written G⁰/G¹ here):</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">G⁰/G¹ is NOT the G-code commands G0/G1</span>
+      <p>Don't confuse the two. <b>G⁰/G¹</b> here are <em>geometric continuity classes</em> (positional / tangential continuity). <code>G0</code>/<code>G1</code> in <a href="08-machine-code.html">Ch. 8</a> are <em>G-code motion commands</em> (rapid move / linear interpolation). They are entirely unrelated - the matching characters are pure coincidence.</p>
+    </div>
+
+    <div class="kv">
+      <div><dt>G⁰ (positional)</dt><dd>Two consecutive segments <em>share exactly one endpoint</em> - no gap. But the direction of travel through that shared point can change abruptly (still a visible kink).</dd></div>
+      <div><dt>G¹ (tangential)</dt><dd>Beyond sharing the point, the two segments also <em>share a direction</em> at the join - no visible kink. The stroke flows smoothly through the join.</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 700 250" width="700" role="img" aria-label="Comparing G0, G1 continuity and a gap case">
+        <g font-family="sans-serif">
+          <!-- gap -->
+          <text x="120" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Gap (fails G⁰)</text>
+          <path d="M30 180 C 60 90, 100 90, 118 120" fill="none" stroke="#dc2626" stroke-width="3"/>
+          <path d="M132 128 C 150 155, 190 160, 215 110" fill="none" stroke="#dc2626" stroke-width="3"/>
+          <circle cx="118" cy="120" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="132" cy="128" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="125" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">two endpoints offset from each other</text>
+
+          <!-- G0 -->
+          <text x="350" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">G⁰: shared point, kinked direction</text>
+          <path d="M260 180 C 290 90, 330 90, 350 130" fill="none" stroke="#d97706" stroke-width="3"/>
+          <path d="M350 130 L 445 110" fill="none" stroke="#d97706" stroke-width="3"/>
+          <circle cx="350" cy="130" r="4" fill="#d97706"/>
+          <path d="M350 130 l 8 -16" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <path d="M350 130 l 18 -3.8" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <text x="350" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">no gap, but a visible corner</text>
+
+          <!-- G1 -->
+          <text x="590" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">G¹: shared point &amp; direction</text>
+          <path d="M500 180 C 530 100, 560 108, 585 130" fill="none" stroke="#16a34a" stroke-width="3"/>
+          <path d="M585 130 C 610 152, 650 130, 665 95" fill="none" stroke="#16a34a" stroke-width="3"/>
+          <circle cx="585" cy="130" r="4" fill="#16a34a"/>
+          <path d="M567 116 L 603 144" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="2 2"/>
+          <text x="585" y="222" text-anchor="middle" font-size="11" fill="#8a94a6">stroke flows smoothly through the join</text>
+        </g>
+      </svg>
+      <figcaption>Three situations at a join. Left: the two endpoints were never welded, leaving a <b>gap</b> (fails even G⁰). Middle: <b>G⁰</b> - they share a point so there's no gap, but the tangent changes abruptly, showing a corner. Right: <b>G¹</b> - they share both point and tangent (dashed grey line), and the stroke flows smoothly through the join.</figcaption>
+    </figure>
+
+    <h3 id="s31">3.1 Weld coincident endpoints (kill gaps)</h3>
+    <p>Whenever two segments/chains are supposed to meet, force their shared point to be <b>identical</b>, not merely close. Snap endpoints within an epsilon to a common value (this is <b>endpoint welding / vertex snapping</b>). Never rely on two independently computed points being bit-equal. A sub-tolerance gap turns into a visible pen-up + travel + pen-down move - the classic <em>"đứt đoạn"</em> (break) bug.</p>
+
+    <figure>
+      <svg viewBox="0 0 700 220" width="700" role="img" aria-label="Welding coincident points and explicit loop closure">
+        <g font-family="sans-serif">
+          <!-- before weld -->
+          <text x="175" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626">Before: gap under ε</text>
+          <path d="M40 150 L 150 70" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <path d="M162 66 L 300 120" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <!-- spurious travel across the gap -->
+          <path d="M150 70 L 162 66" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 4"/>
+          <circle cx="150" cy="70" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="162" cy="66" r="4" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="156" y="52" text-anchor="middle" font-size="10.5" fill="#dc2626">stray up+travel+down</text>
+          <text x="175" y="185" text-anchor="middle" font-size="11" fill="#8a94a6">two points offset &gt; 0 → machine lifts the pen</text>
+
+          <!-- after weld -->
+          <text x="525" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">After: welded to one point</text>
+          <path d="M390 150 L 505 68" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <path d="M505 68 L 650 120" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="505" cy="68" r="4.5" fill="#16a34a"/>
+          <text x="525" y="185" text-anchor="middle" font-size="11" fill="#8a94a6">one shared point → one continuous stroke</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Working move</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Travel (pen up)</span>
+        <span><i style="border-color:#16a34a"></i> Welded</span>
+      </div>
+      <figcaption>A small sub-tolerance gap (left) forces the machine to lift the pen, travel a tiny distance, and re-engage: the path looks broken and wastes time. After welding (right), the two segments share exactly one vertex and become one continuous stroke.</figcaption>
+    </figure>
+
+    <h3 id="s32">3.2 Close loops explicitly</h3>
+    <p>A closed subpath must have <code>first == last</code> within ε. If flattening or an intermediate operation left them slightly apart, re-append the first vertex to close the loop. Test closure with a squared-distance epsilon over at least 3-4 points (<a href="02-geometry.html">Ch. 2 §2</a>). An unclosed loop leaves a small gap right at the start/end join - exactly the defect described in §3.1.</p>
+
+    <h3 id="s33">3.3 Don't fragment contiguous runs</h3>
+    <p>When clipping fill/pattern lines to a region (<a href="02-geometry.html">Ch. 2 §6</a>), <b>merge</b> adjacent inside sub-segments into one chain rather than emitting each tiny piece separately. Only a genuine exit-and-re-enter should ever break a chain. Emitting per-piece produces hundreds of micro-chains and a stuttering, lift-heavy path.</p>
+
+    <h3 id="s34">3.4 The boundary-probe nudge (a subtle break bug)</h3>
+    <p>A connector that runs <em>along</em> a region's edge (e.g. a boustrophedon turn) has its midpoint sitting <em>exactly on</em> the boundary, where a strict <code>contains()</code> returns false and the connector gets wrongly rejected - splitting one smooth fill into many separate strokes. <b>Fix:</b> before the inside/outside test, nudge the probe point a hair (<code>≈ 0.25 · spacing</code>) toward the region's <b>bounding-box center</b> (a cheap approximate centroid). This preserves valid edge connectors and keeps the fill continuous.</p>
+
+    <figure>
+      <svg viewBox="0 0 700 260" width="700" role="img" aria-label="Nudging the boundary-probe point toward the bounding-box center">
+        <g font-family="sans-serif">
+          <!-- region -->
+          <rect x="60" y="50" width="360" height="170" rx="4" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5"/>
+          <text x="80" y="72" font-size="12" fill="#8a94a6">Fill region</text>
+
+          <!-- hatch lines -->
+          <g stroke="#2563eb" stroke-width="2.5">
+            <path d="M90 90 H390"/>
+            <path d="M90 130 H390"/>
+            <path d="M90 170 H390"/>
+          </g>
+          <!-- boundary connector running ALONG the right edge -->
+          <path d="M390 90 V130" stroke="#2563eb" stroke-width="2.5"/>
+          <path d="M90 130 V170" stroke="#2563eb" stroke-width="2.5"/>
+
+          <!-- probe midpoint on the boundary (rejected) -->
+          <circle cx="420" cy="110" r="5" fill="#fff" stroke="#dc2626" stroke-width="2"/>
+          <text x="428" y="106" font-size="11" fill="#dc2626">probe point ON boundary</text>
+          <text x="428" y="122" font-size="11" fill="#dc2626">contains() = false ✗</text>
+
+          <!-- nudged point -->
+          <path d="M420 110 L 392 118" stroke="#7c3aed" stroke-width="1.6" marker-end="url(#arn)"/>
+          <circle cx="388" cy="120" r="5" fill="#7c3aed"/>
+          <text x="300" y="205" font-size="11" fill="#7c3aed">nudge ≈0.25·spacing toward bbox center → contains() = true ✓</text>
+
+          <!-- bbox center -->
+          <circle cx="240" cy="135" r="3.5" fill="none" stroke="#8a94a6" stroke-width="1.5"/>
+          <path d="M240 135 m-9 0 h18 M240 135 m0 -9 v18" stroke="#8a94a6" stroke-width="1"/>
+          <text x="240" y="152" text-anchor="middle" font-size="10.5" fill="#8a94a6">bounding-box center</text>
+
+          <!-- spacing marker -->
+          <path d="M470 90 V130" stroke="#94a3b8" stroke-width="1"/>
+          <path d="M466 90 h8 M466 130 h8" stroke="#94a3b8" stroke-width="1"/>
+          <text x="478" y="114" font-size="11" fill="#8a94a6">spacing</text>
+
+          <defs>
+            <marker id="arn" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+            </marker>
+          </defs>
+        </g>
+      </svg>
+      <figcaption>The midpoint of a connector running along the edge sits exactly <em>on</em> the boundary, where <code>contains()</code> returns false and wrongly rejects the connector. Nudging it by <code>≈ 0.25·spacing</code> toward the bounding-box center moves the probe point solidly inside the region, the test returns true, and the fill stays continuous.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Caveat: concave or holed regions</span>
+      <p>The bounding-box center is only a valid interior reference for convex-ish regions. On concave or holed regions it can lie outside the material; in that case the nudge merely biases the test toward <em>rejecting</em> the connector - which is <em>safe</em>, since it never validates a move that crosses a gap. See <a href="03-fill-algorithms.html">Ch. 3 §3.3</a> for the local-test fallback.</p>
+    </div>
+
+    <h3 id="s35">3.5 Join fragments into flowing strokes</h3>
+    <p>Skeleton tracing and per-segment extraction naturally produce many fragments. Rejoin them at shared endpoints following the <b>straightest continuation</b> rule (max direction dot-product, turn &lt; 90°), so a scribble of pieces becomes a handful of flowing strokes (<a href="05-centerline-text.html">Ch. 5 §3.5</a>). The result is G¹-continuous runs with far fewer pen lifts.</p>
+
+    <h2 id="s4">4. Smoothing generated polylines (kill wobble &amp; staircase)</h2>
+    <p>Some chain sources (raster skeletons, traced bitmaps) are born jagged. Apply these three steps in <b>exactly this order</b>: denoise → simplify → round.</p>
+
+    <div class="steps">
+      <span class="step">1 · Moving average [1,2,1]/4</span>
+      <span class="arrow">→</span>
+      <span class="step">2 · Douglas–Peucker</span>
+      <span class="arrow">→</span>
+      <span class="step">3 · Chaikin</span>
+    </div>
+
+    <div class="kv">
+      <div><dt>1 · Moving-average low-pass</dt><dd><b>Moving-average low-pass</b> (<code>[1,2,1]/4</code>, a few passes) - removes ±1-sample staircase wobble. Pin the endpoints of an open path; wrap around a closed loop.</dd></div>
+      <div><dt>2 · Simplify</dt><dd><b>Douglas–Peucker</b> at a small tolerance - drops redundant collinear points <em>without</em> changing the shape (fewer points = faster stream, no quality loss).</dd></div>
+      <div><dt>3 · Round corners</dt><dd><b>Chaikin corner-cutting</b> (1-2 iterations) - rounds remaining corners into a smooth curve.</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 250" width="720" role="img" aria-label="The three-step smoothing chain: moving average, Douglas-Peucker, Chaikin">
+        <g font-family="sans-serif">
+          <!-- 0 raw -->
+          <text x="110" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#dc2626">0 · Raw (staircase)</text>
+          <polyline points="30,150 45,120 42,122 60,90 57,92 78,70 95,72 118,50 140,52 165,40 190,42"
+                    fill="none" stroke="#dc2626" stroke-width="2" stroke-linejoin="round"/>
+          <g fill="#dc2626"><circle cx="30" cy="150" r="2"/><circle cx="45" cy="120" r="2"/><circle cx="60" cy="90" r="2"/><circle cx="78" cy="70" r="2"/><circle cx="95" cy="72" r="2"/><circle cx="118" cy="50" r="2"/><circle cx="140" cy="52" r="2"/><circle cx="165" cy="40" r="2"/><circle cx="190" cy="42" r="2"/></g>
+
+          <!-- 1 moving average -->
+          <text x="360" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#d97706">1 · Moving average</text>
+          <polyline points="270,150 288,118 308,92 330,72 353,60 378,50 400,44 425,42 440,42"
+                    fill="none" stroke="#d97706" stroke-width="2.2" stroke-linejoin="round"/>
+          <text x="360" y="168" text-anchor="middle" font-size="10.5" fill="#8a94a6">wobble gone, still redundant points</text>
+
+          <!-- 2 DP -->
+          <text x="610" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#2563eb">2 · Douglas–Peucker</text>
+          <polyline points="520,150 560,88 610,52 690,42" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round"/>
+          <g fill="#2563eb"><circle cx="520" cy="150" r="2.6"/><circle cx="560" cy="88" r="2.6"/><circle cx="610" cy="52" r="2.6"/><circle cx="690" cy="42" r="2.6"/></g>
+          <text x="610" y="168" text-anchor="middle" font-size="10.5" fill="#8a94a6">redundant points dropped, shape kept</text>
+
+          <!-- 3 Chaikin -->
+          <text x="360" y="205" text-anchor="middle" font-size="12.5" font-weight="700" fill="#16a34a">3 · Chaikin → final smooth stroke</text>
+          <path d="M270 240 C 300 190, 330 172, 380 168 C 430 164, 470 178, 490 200" fill="none" stroke="#16a34a" stroke-width="2.6"/>
+          <text x="360" y="234" text-anchor="middle" font-size="10.5" fill="#8a94a6" opacity="0"> </text>
+        </g>
+      </svg>
+      <figcaption>Mandatory order: <b>smooth</b> (remove staircase noise) → <b>simplify</b> (drop redundant points) → <b>round</b> (beautify). Simplifying <em>before</em> smoothing locks the staircase in place; rounding <em>before</em> simplifying wastes work.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Caution: over-smoothing</span>
+      <p>Smoothing too aggressively will <em>shrink</em> the shape and round off intended sharp corners. Keep tolerances small and iteration counts low. When a shape has <em>intended</em> sharp corners, a corner-preserving smoother (angle-thresholded) beats blanket Chaikin applied everywhere.</p>
+    </div>
+
+    <h2 id="s5">5. Consistent point density</h2>
+    <p>Very uneven segment lengths make a controller's motion planner surge and stall (one long move followed by a burst of tiny ones), which <em>looks</em> rough even though the geometry itself is smooth. Two mitigations:</p>
+    <ul>
+      <li>Adaptive flattening already spaces points by curvature - which is exactly what's needed.</li>
+      <li>Optionally <b>resample</b> a chain to a maximum segment length on long straight runs, so the feed rate stays even. Balance this against output size.</li>
+    </ul>
+
+    <h2 id="s6">6. Arc fitting (optional, advanced)</h2>
+    <p>Instead of many short line segments, fit <b>circular arcs</b> to smooth spans and emit native arc commands (<b>G-code G2/G3</b>; HPGL <code>AA/AR/CI</code>).</p>
+
+    <figure>
+      <svg viewBox="0 0 700 210" width="700" role="img" aria-label="Arc fitting in place of many line segments">
+        <g font-family="sans-serif">
+          <text x="175" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#d97706">Many line segments</text>
+          <polyline points="40,170 55,132 80,100 115,78 158,66 205,66 250,80 285,104"
+                    fill="none" stroke="#d97706" stroke-width="2.2" stroke-linejoin="round"/>
+          <g fill="#d97706"><circle cx="40" cy="170" r="2.6"/><circle cx="55" cy="132" r="2.6"/><circle cx="80" cy="100" r="2.6"/><circle cx="115" cy="78" r="2.6"/><circle cx="158" cy="66" r="2.6"/><circle cx="205" cy="66" r="2.6"/><circle cx="250" cy="80" r="2.6"/><circle cx="285" cy="104" r="2.6"/></g>
+          <text x="175" y="196" text-anchor="middle" font-size="11" fill="#8a94a6">dozens of vertices, still faceting risk</text>
+
+          <text x="530" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">One G2/G3 arc</text>
+          <path d="M400 170 A150 150 0 0 1 645 104" fill="none" stroke="#16a34a" stroke-width="2.8"/>
+          <g fill="#16a34a"><circle cx="400" cy="170" r="3"/><circle cx="645" cy="104" r="3"/></g>
+          <text x="530" y="196" text-anchor="middle" font-size="11" fill="#8a94a6">one command, exactly curved, tiny output</text>
+        </g>
+      </svg>
+      <figcaption>The controller interpolates a <em>true</em> arc: no faceting regardless of feed rate, and one arc replaces dozens of segments, so output is much smaller and look-ahead runs deeper (<a href="11-performance.html">Ch. 11</a>).</figcaption>
+    </figure>
+
+    <p>Cost: arc fitting (e.g. <b>biarc fitting</b> onto Bézier spans) is more complex, and not every controller supports arcs well. Use line flattening as the robust default, and arc fitting as an optimisation where the target dialect supports it. <b>Keywords:</b> <em>biarc/arc fitting, G2/G3 arc interpolation</em>.</p>
+
+    <h2 id="s7">7. Avoid integer-rounding aliasing at emission</h2>
+    <p>Some dialects use integer device units (e.g. HPGL: 40 units/mm). Rounding each point independently can reintroduce a fine staircase on shallow diagonals. Mitigate with two rules:</p>
+    <ul>
+      <li>Emit at the <b>finest device unit</b> available (40 units/mm ≈ 0.025 mm steps, below tool resolution and therefore acceptable).</li>
+      <li>Keep all geometry in floating-point mm and <b>round only at the final <code>format()</code> step</b> (<a href="08-machine-code.html">Ch. 8 §4</a>) - never round mid-pipeline and keep computing on the rounded values (errors compound into visible drift/gaps).</li>
+    </ul>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Golden rule: compute in float, round only at emission</span>
+      <p>Every computation in the pipeline stays in floating-point mm. Rounding to device units is the <em>last step</em>, done <em>exactly once</em>, right at <code>format()</code>. This is the surest way to keep rounding error from accumulating into a distorted shape.</p>
+    </div>
+
+    <h2 id="s8">8. Checklist (AI protecting curve quality)</h2>
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Quality checklist</span>
+      <ul>
+        <li>Flatten with a world-space tolerance ≈ 0.02 mm (scale-up trick or adaptive subdivision); one routine, one policy.</li>
+        <li>Prefer curvature-adaptive subdivision over uniform stepping.</li>
+        <li>Weld coincident endpoints; close loops explicitly (ε test).</li>
+        <li>Merge contiguous clipped runs; don't emit per-piece micro-chains.</li>
+        <li>Nudge boundary-probe points toward the bounding-box center so edge connectors survive.</li>
+        <li>Join fragments by straightest continuation (G¹) into flowing strokes.</li>
+        <li>Smooth → simplify → round, with small tolerances, respecting corners.</li>
+        <li>Round to device units only at emission; compute in float mm throughout.</li>
+        <li>Consider arc fitting where the target dialect supports G2/G3.</li>
+      </ul>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Related reading</span>
+      <p>Flattening foundations and ε tests in <a href="02-geometry.html">Ch. 2</a>; connectors and the fill engine in <a href="03-fill-algorithms.html">Ch. 3</a>; joining skeleton fragments in <a href="05-centerline-text.html">Ch. 5</a>; coordinate formatting and rounding in <a href="08-machine-code.html">Ch. 8</a>; trading point count against stream speed in <a href="11-performance.html">Ch. 11</a>.</p>
+    </div>
+
+    <div class="pager">
+      <a href="09-raster-engraving.html"><div class="dir">← Previous</div><div class="ttl">9 · Raster Engraving</div></a>
+      <a class="next" href="11-performance.html"><div class="dir">Next chapter →</div><div class="ttl">11 · Performance &amp; Complexity</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

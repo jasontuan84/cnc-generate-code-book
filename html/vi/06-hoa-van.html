@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>6 · Hoa văn &amp; Tô bóng - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 6 · Hoa văn</span>
+    <h1>Hoa văn &amp; Tô bóng</h1>
+    <p class="lead">Ngoài một vùng tô đặc đơn thuần (<a href="03-thuat-toan-to.html">Ch. 3</a>), một hình có thể được tô bằng một <b>hoa văn trang trí</b> (đường thẳng, lưới, dệt, gạch, chấm, sóng, …) cần được tái hiện <em>đúng nguyên văn</em> trên máy, hoặc được tô bóng bằng một <b>mức đậm nhạt</b> ánh xạ sang mật độ tô. Chương này bàn cả hai, và cách chúng tương tác với bộ tô đặc.</p>
+
+    <h2>1. Ba loại "tô" - chọn đúng đường đi</h2>
+    <p>Khi một hình có thuộc tính tô, việc đầu tiên là <b>phân loại</b> nó trước khi sinh chuỗi:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Loại tô</th><th>Cách nhận diện</th><th>Nguồn sinh chuỗi</th></tr></thead>
+      <tbody>
+        <tr><td><b>Đặc (solid)</b></td><td>Pattern rỗng / giá trị đặc biệt "solid"</td><td><b>Bộ tô</b> - chiến lược Auto (<a href="03-thuat-toan-to.html">Ch. 3</a>)</td></tr>
+        <tr><td><b>Hatch đơn giản</b></td><td>Pattern thuộc họ đường/lưới (line-h, line-v, diagonal, grid, cross)</td><td><b>Hatch</b> tại tập góc của pattern</td></tr>
+        <tr><td><b>Texture trang trí</b></td><td>Pattern có hình học nét lặp lại thật sự (dệt, gạch, sóng, chấm tròn…)</td><td><b>Lát &amp; xén hoa văn</b> (chương này)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Ba kiểu tô: đặc, hatch đơn giản, texture trang trí">
+        <defs>
+          <clipPath id="clipA"><circle cx="120" cy="112" r="72"/></clipPath>
+          <clipPath id="clipB"><circle cx="360" cy="112" r="72"/></clipPath>
+          <clipPath id="clipC"><circle cx="600" cy="112" r="72"/></clipPath>
+          <pattern id="pDense" width="5" height="5" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="0" y2="5" stroke="#2563eb" stroke-width="2.4"/>
+          </pattern>
+          <pattern id="pHatch" width="22" height="22" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="22" stroke="#2563eb" stroke-width="2.6"/>
+          </pattern>
+          <pattern id="pTex" width="18" height="18" patternUnits="userSpaceOnUse">
+            <circle cx="9" cy="9" r="3.4" fill="none" stroke="#2563eb" stroke-width="1.8"/>
+          </pattern>
+        </defs>
+
+        <circle cx="120" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipA)"><rect x="48" y="40" width="144" height="144" fill="url(#pDense)"/></g>
+        <circle cx="120" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="120" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Đặc (Auto)</text>
+        <text x="120" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">bộ tô, con đường nhanh nhất</text>
+
+        <circle cx="360" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipB)"><rect x="288" y="40" width="144" height="144" fill="url(#pHatch)"/></g>
+        <circle cx="360" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="360" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Hatch đơn giản</text>
+        <text x="360" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">đường song song rời rạc</text>
+
+        <circle cx="600" cy="112" r="72" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <g clip-path="url(#clipC)"><rect x="528" y="40" width="144" height="144" fill="url(#pTex)"/></g>
+        <circle cx="600" cy="112" r="72" fill="none" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="600" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Texture trang trí</text>
+        <text x="600" y="230" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">hình học nét lặp lại (vd. chấm)</text>
+      </svg>
+      <figcaption>Ba kiểu tô nhìn giống nhau ở chỗ đều "phủ kín" một hình, nhưng <b>bản chất hình học</b> hoàn toàn khác nhau: đặc là chuỗi kín tối ưu tốc độ, hatch là các đường song song rời rạc, còn texture là một ô hoa văn được lặp lại nguyên trạng.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Vì sao phải phân loại trước</span>
+      <p>Một vùng tô đặc nên được vẽ theo cách <b>nhanh nhất</b> (Auto), còn một texture trang trí phải được tái hiện <em>đúng như trên màn hình</em> - hình học của nó <em>chính là</em> bản sắc của nó, nên không thể thay bằng một chiến lược nhanh hơn nhưng khác hình dạng.</p>
+    </div>
+
+    <h2>2. Hoa văn đường/lưới đơn giản → tập góc hatch</h2>
+    <p>Họ pattern đường/lưới được ánh xạ sang một tập nhỏ các <b>góc hatch</b>; sinh một lượt Hatch (<a href="03-thuat-toan-to.html">Ch. 3 §3.1</a>) cho mỗi góc:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Pattern</th><th>Tập góc (độ)</th></tr></thead>
+      <tbody>
+        <tr><td>đường ngang / dash-h</td><td><code>{0}</code></td></tr>
+        <tr><td>đường dọc / dash-v</td><td><code>{90}</code></td></tr>
+        <tr><td>chéo thuận (forward diagonal)</td><td><code>{45}</code></td></tr>
+        <tr><td>chéo nghịch (back diagonal)</td><td><code>{-45}</code></td></tr>
+        <tr><td>lưới / cộng / lattice / plaid / weave</td><td><code>{0, 90}</code></td></tr>
+        <tr><td>lưới chéo / cross</td><td><code>{45, -45}</code></td></tr>
+        <tr><td>(mọi trường hợp khác)</td><td><code>{45}</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>Sau đó cộng thêm <b>góc xoay hoa văn</b> của hình (<code>angle + patternAngle</code>) vào từng góc trong tập, để toàn bộ tập góc xoay theo đúng thiết lập của người dùng. Khoảng cách giữa các đường lấy từ khoảng hatch của tác vụ (hoặc ánh xạ tô bóng, §4). Đây là những đường hatch <em>tách rời có chủ đích</em> - vẻ ngoài phụ thuộc vào việc các đường song song đó tồn tại đúng như vậy, không bị nối lại.</p>
+
+    <figure>
+      <svg viewBox="0 0 420 300" width="420" role="img" aria-label="Tập góc hatch xoay theo patternAngle">
+        <circle cx="210" cy="140" r="108" fill="#fdfbf6" stroke="#e6ded0"/>
+        <!-- base angle set {0,90} dashed grey -->
+        <line x1="102" y1="140" x2="318" y2="140" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <line x1="210" y1="32" x2="210" y2="248" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <!-- rotated set +25deg solid blue -->
+        <g stroke="#2563eb" stroke-width="2.6">
+          <line x1="112.1" y1="185.6" x2="307.9" y2="94.4"/>
+          <line x1="255.6" y1="237.9" x2="164.4" y2="42.1"/>
+        </g>
+        <!-- angle arc -->
+        <path d="M 258 140 A 48 48 0 0 0 249.6 96.7" fill="none" stroke="#7c3aed" stroke-width="2"/>
+        <text x="272" y="112" font-size="12" fill="#7c3aed" font-family="sans-serif" font-weight="700">patternAngle</text>
+        <circle cx="210" cy="140" r="3.4" fill="#1a2230"/>
+        <text x="210" y="20" text-anchor="middle" font-size="12" fill="#94a3b8" font-family="sans-serif">góc gốc {0°, 90°} (vd. grid)</text>
+        <text x="210" y="285" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">góc thực tế = góc gốc + patternAngle</text>
+      </svg>
+      <figcaption>Tập góc cơ sở của pattern (nét đứt xám) được cộng thêm <code>patternAngle</code> để ra tập góc thực tế (nét liền xanh) - toàn bộ tập xoay <em>cùng nhau</em> như một khối cứng.</figcaption>
+    </figure>
+
+    <h2>3. Hoa văn trang trí: lát &amp; xén (tile &amp; clip)</h2>
+    <p>Một texture được định nghĩa một lần dưới dạng <b>hình học ô lát</b>: tập hợp các đường gấp khúc (nét) nằm trong một ô chữ nhật lặp lại (<code>tileW × tileH</code>, theo không gian pixel riêng của texture). Để tô một hình bằng texture đó, ta phải tái hiện <em>chính xác</em> brush như đã thấy trên màn hình:</p>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Ô lát (tile)</span>
+      <p>Một đơn vị hình học nhỏ nhất của texture, chứa một hoặc nhiều nét gấp khúc, được lặp lại đều đặn theo lưới <code>tileW × tileH</code> để phủ kín một vùng bất kỳ - giống hệt cách trình soạn thảo hiển thị brush lặp lại trên màn hình.</p>
+    </div>
+
+    <pre><code><span class="cm">// Bước 1: tính phép biến đổi tile → hình</span>
+<span class="kw">scale</span>  = texBase × patternScale / shapeScale   <span class="cm">// khớp kích cỡ brush trên màn hình</span>
+<span class="kw">rotate</span> = patternAngle
+<span class="cm">// (texBase là tỉ lệ brush cơ sở cố định; shapeScale khử co giãn riêng của hình
+//  để kích cỡ texture ổn định bất kể hình to hay nhỏ)</span>
+
+<span class="cm">// Bước 2: quy hộp bao của hình về không gian pixel của tile (biến đổi nghịch đảo)</span>
+<span class="kw">for</span> i <span class="kw">in</span> [i0..i1], j <span class="kw">in</span> [j0..j1]:   <span class="cm">// chỉ số ô lát có thể giao với hình</span>
+    <span class="kw">if</span> soLuongO <span class="kw">quá lớn</span>: <span class="fn">bailOut</span>()      <span class="cm">// dự phòng: gọi trả về tô phẳng cho caller</span>
+
+<span class="cm">// Bước 3: với mỗi ô (i, j), với mỗi nét gấp khúc trong ô</span>
+<span class="kw">for</span> mỗi stroke <span class="kw">in</span> tile:
+    stroke' = <span class="fn">translate</span>(stroke, i·tileW, j·tileH)
+    stroke' = <span class="fn">applyTransform</span>(stroke', scale, rotate)
+    runs    = <span class="fn">clipToShapeInterior</span>(stroke')   <span class="cm">// xén đoạn–đa giác, xem Ch.2 §6</span>
+    <span class="fn">append</span>(chains, runs)</code></pre>
+
+    <p>Kết quả: các nét của texture được lát khắp hình và xén theo đúng biên của nó - giống hệt, từng pixel một, với brush đã hiển thị, để bản xem trước và mã máy luôn khớp nhau. Làm việc trong không gian <b>cục bộ</b> của hình, rồi mới ánh xạ cục bộ→thế giới→máy khi phát mã.</p>
+
+    <figure>
+      <svg viewBox="0 0 640 300" width="640" role="img" aria-label="Lát ô hoa văn phủ hình rồi xén theo biên">
+        <defs>
+          <clipPath id="clipShape">
+            <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z"/>
+          </clipPath>
+        </defs>
+        <!-- Panel A: grid over shape, before clip -->
+        <g>
+          <text x="140" y="24" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">1–2 · Lưới ô lát phủ hộp bao</text>
+          <g stroke="#d9cdb4" stroke-width="1" stroke-dasharray="3 3">
+            <line x1="0" y1="40" x2="280" y2="40"/><line x1="0" y1="70" x2="280" y2="70"/>
+            <line x1="0" y1="100" x2="280" y2="100"/><line x1="0" y1="130" x2="280" y2="130"/>
+            <line x1="0" y1="160" x2="280" y2="160"/><line x1="0" y1="190" x2="280" y2="190"/><line x1="0" y1="220" x2="280" y2="220"/>
+            <line x1="10" y1="10" x2="10" y2="240"/><line x1="40" y1="10" x2="40" y2="240"/><line x1="70" y1="10" x2="70" y2="240"/>
+            <line x1="100" y1="10" x2="100" y2="240"/><line x1="130" y1="10" x2="130" y2="240"/><line x1="160" y1="10" x2="160" y2="240"/>
+            <line x1="190" y1="10" x2="190" y2="240"/><line x1="220" y1="10" x2="220" y2="240"/><line x1="250" y1="10" x2="250" y2="240"/>
+          </g>
+          <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4"/>
+          <g stroke="#94a3b8" stroke-width="1.6">
+            <path d="M17 47 L33 63 M33 47 L17 63"/><path d="M47 47 L63 63 M63 47 L47 63"/><path d="M77 47 L93 63 M93 47 L77 63"/><path d="M107 47 L123 63 M123 47 L107 63"/><path d="M137 47 L153 63 M153 47 L137 63"/><path d="M167 47 L183 63 M183 47 L167 63"/><path d="M197 47 L213 63 M213 47 L197 63"/>
+            <path d="M17 77 L33 93 M33 77 L17 93"/><path d="M47 77 L63 93 M63 77 L47 93"/><path d="M77 77 L93 93 M93 77 L77 93"/><path d="M107 77 L123 93 M123 77 L107 93"/><path d="M137 77 L153 93 M153 77 L137 93"/><path d="M167 77 L183 93 M183 77 L167 93"/><path d="M197 77 L213 93 M213 77 L197 93"/>
+            <path d="M17 107 L33 123 M33 107 L17 123"/><path d="M47 107 L63 123 M63 107 L47 123"/><path d="M77 107 L93 123 M93 107 L77 123"/><path d="M107 107 L123 123 M123 107 L107 123"/><path d="M137 107 L153 123 M153 107 L137 123"/><path d="M167 107 L183 123 M183 107 L167 123"/><path d="M197 107 L213 123 M213 107 L197 123"/>
+            <path d="M17 137 L33 153 M33 137 L17 153"/><path d="M47 137 L63 153 M63 137 L47 153"/><path d="M77 137 L93 153 M93 137 L77 153"/><path d="M107 137 L123 153 M123 137 L107 153"/><path d="M137 137 L153 153 M153 137 L137 153"/><path d="M167 137 L183 153 M183 137 L167 153"/><path d="M197 137 L213 153 M213 137 L197 153"/>
+            <path d="M17 167 L33 183 M33 167 L17 183"/><path d="M47 167 L63 183 M63 167 L47 183"/><path d="M77 167 L93 183 M93 167 L77 183"/><path d="M107 167 L123 183 M123 167 L107 183"/><path d="M137 167 L153 183 M153 167 L137 183"/><path d="M167 167 L183 183 M183 167 L167 183"/><path d="M197 167 L213 183 M213 167 L197 183"/>
+            <path d="M17 197 L33 213 M33 197 L17 213"/><path d="M47 197 L63 213 M63 197 L47 213"/><path d="M77 197 L93 213 M93 197 L77 213"/><path d="M107 197 L123 213 M123 197 L107 213"/><path d="M137 197 L153 213 M153 197 L137 213"/><path d="M167 197 L183 213 M183 197 L167 213"/><path d="M197 197 L213 213 M213 197 L197 213"/>
+          </g>
+        </g>
+        <!-- arrow -->
+        <path d="M300 140 L340 140" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#arT)"/>
+        <text x="320" y="128" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif" font-weight="700">xén</text>
+        <!-- Panel B: clipped result -->
+        <g transform="translate(360,0)">
+          <text x="140" y="24" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">3 · Kết quả sau khi xén vào biên</text>
+          <path d="M60,70 C110,30 190,30 225,60 C260,90 255,145 220,168 C185,192 120,198 78,172 C40,148 25,105 60,70 Z" fill="#f3ede1" stroke="#2563eb" stroke-width="2.4"/>
+          <g clip-path="url(#clipShape)" stroke="#2563eb" stroke-width="1.8">
+            <path d="M17 47 L33 63 M33 47 L17 63"/><path d="M47 47 L63 63 M63 47 L47 63"/><path d="M77 47 L93 63 M93 47 L77 63"/><path d="M107 47 L123 63 M123 47 L107 63"/><path d="M137 47 L153 63 M153 47 L137 63"/><path d="M167 47 L183 63 M183 47 L167 63"/><path d="M197 47 L213 63 M213 47 L197 63"/>
+            <path d="M17 77 L33 93 M33 77 L17 93"/><path d="M47 77 L63 93 M63 77 L47 93"/><path d="M77 77 L93 93 M93 77 L77 93"/><path d="M107 77 L123 93 M123 77 L107 93"/><path d="M137 77 L153 93 M153 77 L137 93"/><path d="M167 77 L183 93 M183 77 L167 93"/><path d="M197 77 L213 93 M213 77 L197 93"/>
+            <path d="M17 107 L33 123 M33 107 L17 123"/><path d="M47 107 L63 123 M63 107 L47 123"/><path d="M77 107 L93 123 M93 107 L77 123"/><path d="M107 107 L123 123 M123 107 L107 123"/><path d="M137 107 L153 123 M153 107 L137 123"/><path d="M167 107 L183 123 M183 107 L167 123"/><path d="M197 107 L213 123 M213 107 L197 123"/>
+            <path d="M17 137 L33 153 M33 137 L17 153"/><path d="M47 137 L63 153 M63 137 L47 153"/><path d="M77 137 L93 153 M93 137 L77 153"/><path d="M107 137 L123 153 M123 137 L107 153"/><path d="M137 137 L153 153 M153 137 L137 153"/><path d="M167 137 L183 153 M183 137 L167 153"/><path d="M197 137 L213 153 M213 137 L197 153"/>
+            <path d="M17 167 L33 183 M33 167 L17 183"/><path d="M47 167 L63 183 M63 167 L47 183"/><path d="M77 167 L93 183 M93 167 L77 183"/><path d="M107 167 L123 183 M123 167 L107 183"/><path d="M137 167 L153 183 M153 167 L137 183"/><path d="M167 167 L183 183 M183 167 L167 183"/><path d="M197 167 L213 183 M213 167 L197 183"/>
+            <path d="M17 197 L33 213 M33 197 L17 213"/><path d="M47 197 L63 213 M63 197 L47 213"/><path d="M77 197 L93 213 M93 197 L77 213"/><path d="M107 197 L123 213 M123 197 L107 213"/><path d="M137 197 L153 213 M153 197 L137 213"/><path d="M167 197 L183 213 M183 197 L167 213"/><path d="M197 197 L213 213 M213 197 L197 213"/>
+          </g>
+        </g>
+        <defs>
+          <marker id="arT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Trái: lưới ô lát (đứt nét) chứa nét mẫu (dấu X) phủ kín cả hộp bao, vượt ra ngoài biên hình. Phải: sau khi <b>xén</b> theo biên (đoạn–đa giác), chỉ phần nét nằm bên trong hình được giữ lại và trở thành chuỗi.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Chi tiết sống còn: tỉ lệ phải khớp brush trên màn hình</span>
+      <p>Phép biến đổi tile→hình <b>phải</b> dùng đúng tỉ lệ brush hiển thị trên màn hình: cùng công thức <code>texBase × patternScale / shapeScale</code>. Nếu tỉ lệ này lệch đi, mã máy sinh ra sẽ <em>không khớp</em> với thiết kế đã thấy - texture sẽ to/nhỏ sai so với những gì người dùng phê duyệt trên màn hình.</p>
+    </div>
+
+    <h2>4. Tô bóng / đậm nhạt qua mật độ tô</h2>
+    <p>Độc lập với việc pattern là <em>loại nào</em>, một hình có thể mang thêm một <b>mức tô</b> (shade). Như đã thiết lập ở <a href="03-thuat-toan-to.html">Ch. 3 §2</a>:</p>
+
+    <pre><code>spacing = shadeFactor(level) × lineWidth</code></pre>
+
+    <p>Mức càng tối ⇒ hệ số càng nhỏ ⇒ đường càng khít ⇒ kết quả càng đậm. Bảng ánh xạ 4 mức tiêu biểu:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Mức (level)</th><th>shadeFactor (× bề rộng nét)</th></tr></thead>
+      <tbody>
+        <tr><td>Black (đen)</td><td><code>0.8</code></td></tr>
+        <tr><td>Dark (đậm)</td><td><code>1.5</code></td></tr>
+        <tr><td>Gray (xám)</td><td><code>2.5</code></td></tr>
+        <tr><td>Light (nhạt)</td><td><code>5.0</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 210" width="640" role="img" aria-label="Cùng chiến lược Auto, bốn mức mật độ khác nhau">
+        <defs>
+          <clipPath id="s1"><rect x="20" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s2"><rect x="180" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s3"><rect x="340" y="30" width="120" height="120"/></clipPath>
+          <clipPath id="s4"><rect x="500" y="30" width="120" height="120"/></clipPath>
+        </defs>
+        <!-- Black 0.8x -->
+        <rect x="20" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s1)" stroke="#2563eb" stroke-width="3">
+          <line x1="10" y1="34" x2="150" y2="34"/><line x1="10" y1="41" x2="150" y2="41"/><line x1="10" y1="48" x2="150" y2="48"/><line x1="10" y1="55" x2="150" y2="55"/>
+          <line x1="10" y1="62" x2="150" y2="62"/><line x1="10" y1="69" x2="150" y2="69"/><line x1="10" y1="76" x2="150" y2="76"/><line x1="10" y1="83" x2="150" y2="83"/>
+          <line x1="10" y1="90" x2="150" y2="90"/><line x1="10" y1="97" x2="150" y2="97"/><line x1="10" y1="104" x2="150" y2="104"/><line x1="10" y1="111" x2="150" y2="111"/>
+          <line x1="10" y1="118" x2="150" y2="118"/><line x1="10" y1="125" x2="150" y2="125"/><line x1="10" y1="132" x2="150" y2="132"/><line x1="10" y1="139" x2="150" y2="139"/><line x1="10" y1="146" x2="150" y2="146"/>
+        </g>
+        <text x="80" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Black</text>
+        <text x="80" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">0.8× - khít nhất</text>
+
+        <!-- Dark 1.5x -->
+        <rect x="180" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s2)" stroke="#2563eb" stroke-width="3">
+          <line x1="170" y1="34" x2="310" y2="34"/><line x1="170" y1="46" x2="310" y2="46"/><line x1="170" y1="58" x2="310" y2="58"/><line x1="170" y1="70" x2="310" y2="70"/>
+          <line x1="170" y1="82" x2="310" y2="82"/><line x1="170" y1="94" x2="310" y2="94"/><line x1="170" y1="106" x2="310" y2="106"/><line x1="170" y1="118" x2="310" y2="118"/><line x1="170" y1="130" x2="310" y2="130"/><line x1="170" y1="142" x2="310" y2="142"/>
+        </g>
+        <text x="240" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Dark</text>
+        <text x="240" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">1.5×</text>
+
+        <!-- Gray 2.5x -->
+        <rect x="340" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s3)" stroke="#2563eb" stroke-width="3">
+          <line x1="330" y1="36" x2="470" y2="36"/><line x1="330" y1="54" x2="470" y2="54"/><line x1="330" y1="72" x2="470" y2="72"/>
+          <line x1="330" y1="90" x2="470" y2="90"/><line x1="330" y1="108" x2="470" y2="108"/><line x1="330" y1="126" x2="470" y2="126"/><line x1="330" y1="144" x2="470" y2="144"/>
+        </g>
+        <text x="400" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Gray</text>
+        <text x="400" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">2.5×</text>
+
+        <!-- Light 5.0x -->
+        <rect x="500" y="30" width="120" height="120" fill="#f3ede1" stroke="#d9cdb4"/>
+        <g clip-path="url(#s4)" stroke="#2563eb" stroke-width="3">
+          <line x1="490" y1="40" x2="630" y2="40"/><line x1="490" y1="70" x2="630" y2="70"/><line x1="490" y1="100" x2="630" y2="100"/><line x1="490" y1="130" x2="630" y2="130"/>
+        </g>
+        <text x="560" y="172" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230" font-family="sans-serif">Light</text>
+        <text x="560" y="188" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">5.0× - thưa nhất</text>
+      </svg>
+      <figcaption>Bốn ô đều dùng <b>cùng một chiến lược</b> (hatch ngang của Auto) - chỉ <code>spacing</code> thay đổi theo <code>shadeFactor</code>. Hình dạng nét giữ nguyên, chỉ khoảng cách đổi, và mắt người đọc ra bốn "mức xám" khác nhau.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Hai trục độc lập, không bao giờ trộn lẫn</span>
+      <p><b>Pattern / strategy</b> quyết định <em>hình dạng</em> của các đường tô. <b>Shade / density</b> quyết định <em>khoảng cách</em> giữa chúng. Vì vậy "xám nhạt tô đặc qua Auto" và "đen tô đặc qua Auto" dùng <em>cùng một chiến lược</em>, chỉ khác khoảng cách. "Tô kiến trúc" (Architecture fill, <a href="03-thuat-toan-to.html">Ch. 3 §5</a>) là một trường hợp đặc biệt: nó cố định <em>hình dạng</em> về hatch phẳng ở các mức sáng hơn, để riêng mật độ gánh vác việc thể hiện độ đậm nhạt.</p>
+    </div>
+
+    <h2>5. Ghi chú màu / đơn sắc</h2>
+    <p>Với máy một công cụ, đầu ra vốn dĩ là <b>đơn sắc</b>: công cụ hoặc để lại vết, hoặc không. Màu sắc trên màn hình (từ mực của lớp/theme) chỉ là mối quan tâm của <b>hiển thị</b>; đường chạy sinh ra không mang màu. Độ đậm nhạt được biểu diễn bằng <b>mật độ</b>, không phải bằng bất kỳ giá trị màu nào.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">shade == density</span>
+      <p>Giữ màu sắc <b>hoàn toàn bên ngoài</b> phần hình học. Nó chỉ ảnh hưởng đến bản dựng xem trước, không bao giờ ảnh hưởng đến chuỗi điểm được sinh ra.</p>
+    </div>
+
+    <h2>6. Tương tác với bộ tô đặc</h2>
+    <p>Bộ chọn (dispatch, <a href="01-kien-truc.html">Ch. 1 §4</a>) thử các nhánh sau theo thứ tự, cho bất kỳ hình nào <b>có thuộc tính tô</b>:</p>
+
+    <pre><code><span class="kw">if</span> pattern <span class="kw">is</span> texture_trang_tri <span class="kw">and</span> tiling.<span class="fn">sinhDuocNet</span>():
+    dùng chuỗi hoa văn                          <span class="cm">// §3 - lát &amp; xén</span>
+<span class="kw">elif</span> pattern <span class="kw">is</span> solid:
+    dùng chuỗi bộ tô, Auto hoặc ép buộc         <span class="cm">// Ch.3</span>
+<span class="kw">else</span>:  <span class="cm">// hatch đơn giản, HOẶC texture lát ra rỗng</span>
+    dùng chuỗi hatch theo tập góc của pattern   <span class="cm">// §2</span></code></pre>
+
+    <p>Nhánh giữa là nơi <b>Auto fill thông minh</b> hoạt động; nó chỉ áp dụng cho vùng tô đặc thuần tuý. Texture trang trí cố tình bỏ qua Auto (vẻ ngoài của nó chính là mục đích). Nhánh cuối cùng đồng thời là <b>phương án dự phòng an toàn</b> nếu việc lát của một texture chạm mức trần số ô và không sinh ra được nét nào.</p>
+
+    <h2>7. Checklist (khi sinh mã cho hoa văn / tô bóng)</h2>
+    <ol>
+      <li>Phân loại tô: đặc, hatch đơn giản, hay texture trang trí.</li>
+      <li>Đặc → bộ tô (Auto/ép buộc); mật độ lấy từ mức tô.</li>
+      <li>Hatch đơn giản → tập góc + góc xoay pattern; mật độ từ khoảng hatch/mức tô.</li>
+      <li>Texture → lát đúng phép biến đổi brush như trên màn hình, xén theo hình, chặn trần số ô lát, dự phòng về hatch nếu rỗng.</li>
+      <li>Giữ hình dạng-pattern và mật độ-tô bóng là hai trục độc lập.</li>
+      <li>Giữ màu sắc ngoài phần hình học; shade == density.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Tóm lại</span>
+      <p>Phân loại đúng trước khi sinh chuỗi, tôn trọng hình dạng nguyên bản của texture trang trí, và tách bạch trục "hình dạng" khỏi trục "mật độ" - ba nguyên tắc này đủ để mọi hoa văn và mức tô bóng đi ra đúng như đã thiết kế trên màn hình.</p>
+    </div>
+
+    <div class="pager">
+      <a href="05-chu-net-don.html">
+        <div class="dir">← Trước</div>
+        <div class="ttl">5 · Chữ nét đơn (Centerline)</div>
+      </a>
+      <a class="next" href="07-sap-xep.html">
+        <div class="dir">Chương tiếp →</div>
+        <div class="ttl">7 · Sắp xếp đường chạy</div>
+      </a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

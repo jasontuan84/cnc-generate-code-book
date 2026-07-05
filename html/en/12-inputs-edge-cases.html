@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12 · Inputs, Units &amp; Edge Cases - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a class="active" href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 12 · Hardening</span>
+    <h1>Inputs, Units &amp; Edge Cases</h1>
+    <p class="lead">Chapters 2-11 assumed clean, well-scaled geometry. A <b>complete</b>, production-grade generator must also handle the messy realities at the edges: artwork in the wrong units, self-intersecting imported paths, degenerate/empty shapes, out-of-bed geometry, unusual strokes, and the lifecycle of a long job that may be cancelled. This chapter consolidates those concerns so every case has a defined, no-crash behaviour.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Guiding rule</span>
+      <p>The generator <b>must never crash</b> and <b>must never silently produce wrong output</b>. On a bad input it must either normalise it, omit it gracefully, or record a human-readable note - never throw, never hang.</p>
+    </div>
+
+    <h2>1. Source-unit normalisation → world mm</h2>
+    <p>Artwork arrives from many sources in many units. <b>Normalise everything to one world unit (mm)</b> at the earliest possible point, then never think about units again until emission (<a href="08-machine-code.html">Ch. 8 §4</a>).</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Source unit</th><th>Convert to mm by</th></tr></thead>
+      <tbody>
+        <tr><td>mm</td><td><code>× 1</code></td></tr>
+        <tr><td>cm</td><td><code>× 10</code></td></tr>
+        <tr><td>inch</td><td><code>× 25.4</code></td></tr>
+        <tr><td>point (pt)</td><td><code>× 25.4 / 72</code></td></tr>
+        <tr><td>pixel / user-unit @ DPI</td><td><code>× 25.4 / DPI</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Multiple source units converge to one single normalisation point, producing world mm">
+        <g font-family="sans-serif">
+          <!-- source unit chips -->
+          <rect x="16" y="16"  width="150" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="91" y="38" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">mm  ×1</text>
+
+          <rect x="16" y="60"  width="150" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="91" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">cm  ×10</text>
+
+          <rect x="16" y="104" width="150" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="91" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">inch  ×25.4</text>
+
+          <rect x="16" y="148" width="150" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="91" y="170" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">pt  ×25.4/72</text>
+
+          <rect x="16" y="192" width="150" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="91" y="214" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e49b8">px @ DPI ×25.4/DPI</text>
+
+          <!-- converging lines to the funnel -->
+          <g stroke="#94a3b8" stroke-width="1.6" fill="none">
+            <path d="M166 33 C 240 33, 240 118, 300 118"/>
+            <path d="M166 77 C 220 77, 260 118, 300 118"/>
+            <path d="M166 121 L 300 121"/>
+            <path d="M166 165 C 220 165, 260 124, 300 124"/>
+            <path d="M166 209 C 240 209, 240 128, 300 128"/>
+          </g>
+
+          <!-- single conversion point -->
+          <rect x="304" y="76" width="150" height="90" rx="10" fill="#fff8e6" stroke="#f2d88a" stroke-width="1.6"/>
+          <text x="379" y="112" text-anchor="middle" font-size="13" font-weight="700" fill="#b7791f">ONE</text>
+          <text x="379" y="130" text-anchor="middle" font-size="13" font-weight="700" fill="#b7791f">conversion point</text>
+          <text x="379" y="150" text-anchor="middle" font-size="10.5" fill="#8a7148">(at import)</text>
+
+          <!-- arrow to world mm -->
+          <path d="M454 121 h 40" stroke="#2563eb" stroke-width="2.4" marker-end="url(#aru)"/>
+
+          <rect x="500" y="76" width="200" height="90" rx="10" fill="#eefaf0" stroke="#b7e3c2" stroke-width="1.6"/>
+          <text x="600" y="112" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a">World space</text>
+          <text x="600" y="132" text-anchor="middle" font-size="13" fill="#166534">float mm, throughout</text>
+          <text x="600" y="152" text-anchor="middle" font-size="10.5" fill="#3f8f5c">02-11 · machine-agnostic</text>
+
+          <!-- dashed line down to emission -->
+          <path d="M600 166 v 34" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#ard)"/>
+          <rect x="470" y="204" width="260" height="40" rx="8" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="600" y="229" text-anchor="middle" font-size="12" fill="#d6e2ff">Emission: scale → device units (once / point)</text>
+        </g>
+        <defs>
+          <marker id="aru" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/></marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Every source unit converges to <b>one single conversion point</b> at import. From there, all geometry lives in world mm; only the emitter scales to device units, and only ever does so once per point.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">DPI ambiguity</span>
+      <p>Raster images and some vector formats carry their own DPI; if absent, assume a documented default value - commonly <b>96 DPI</b> for screen artwork - and <em>surface that assumption</em> to the user, rather than silently guessing.</p>
+    </div>
+
+    <p>Keep geometry in floating-point mm throughout the pipeline; scale to device units only in the emitter, once, per point (<a href="10-curve-fidelity.html">Ch. 10 §7</a>). Multiple conversion points scattered through the pipeline are a top source of scale bugs.</p>
+
+    <h2>2. Coordinate origin &amp; bed</h2>
+    <p><b>Origin corner.</b> World space and machine space each have a defined origin corner and axis directions. Make the mapping explicit and configurable (<a href="01-architecture.html">Ch. 1 §8</a>); the emitter applies it last (<a href="08-machine-code.html">Ch. 8 §5</a>).</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Check bounds in MACHINE space, not world space</span>
+      <p>Know the machine's work area. Check bounds in <b>machine space</b> - i.e. <em>after</em> the world→machine transform (<a href="08-machine-code.html">Ch. 8 §5</a>) - not in world space: a job that fits in world space can fall off the bed once mirrored/rotated (or a rotary-wrapped axis changes the meaning of coordinates entirely). In other words: map the artwork's bounding box through the same transform, then compare it to the bed rectangle.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="A shape that fits in world space but exceeds the bed bounds after a mirror in machine space">
+        <g font-family="sans-serif">
+          <!-- world panel -->
+          <text x="150" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568">World space</text>
+          <rect x="40" y="38" width="220" height="160" fill="#fdfbf6" stroke="#d9cdb4" stroke-width="1.6" stroke-dasharray="4 3"/>
+          <path d="M70 180 L 110 70 L 150 130 L 190 60 L 230 150" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="66" y="56" width="168" height="128" fill="none" stroke="#16a34a" stroke-width="1.6" stroke-dasharray="3 3"/>
+          <text x="150" y="212" text-anchor="middle" font-size="11" fill="#16a34a">bbox fits within world</text>
+
+          <!-- transform arrow -->
+          <path d="M270 118 h 70" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#art)"/>
+          <text x="305" y="102" text-anchor="middle" font-size="10.5" fill="#7c3aed" font-weight="700">world → machine</text>
+          <text x="305" y="140" text-anchor="middle" font-size="10" fill="#7c3aed">(mirror Y axis)</text>
+
+          <!-- machine panel -->
+          <text x="560" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568">Machine space (bed)</text>
+          <rect x="450" y="38" width="180" height="160" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.6"/>
+          <text x="540" y="216" text-anchor="middle" font-size="11" fill="#8a94a6">bed 180 × 160</text>
+          <!-- mirrored shape now overflows to the right -->
+          <path d="M480 180 L 520 70 L 560 130 L 600 60 L 680 150" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="476" y="56" width="208" height="128" fill="none" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="3 3"/>
+          <line x1="630" y1="38" x2="630" y2="198" stroke="#dc2626" stroke-width="1.4" stroke-dasharray="2 2"/>
+          <path d="M650 100 l14 14 m0 -14 l-14 14" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round"/>
+          <text x="655" y="200" text-anchor="middle" font-size="11" fill="#dc2626" font-weight="700">exceeds bed ~50mm</text>
+        </g>
+        <defs>
+          <marker id="art" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/></marker>
+        </defs>
+      </svg>
+      <figcaption>The same shape fits within <b>world space</b>. After the world→machine mapping (here, a mirror on the Y axis), the bounding box in <b>machine space</b> exceeds the bed. This is why bounds must be checked <em>after</em> the transform, not before.</figcaption>
+    </figure>
+
+    <div class="cards">
+      <div class="card"><h4>Reject</h4><p>Reject the job with a clear message ("artwork exceeds bed by N mm"). The safest, most explicit option.</p></div>
+      <div class="card"><h4>Clamp</h4><p>Crop the shape to fit the bed. Rarely desirable - it silently distorts the artwork.</p></div>
+      <div class="card"><h4>Warn and proceed</h4><p>Let the user decide, recording an annotation.</p></div>
+    </div>
+    <p>Pick a policy and make it explicit. Whichever policy is chosen, off-bed working moves must never be emitted silently.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Home always stays in raw machine coordinates</span>
+      <p><b>Return-home</b> commands always use raw machine coordinates, never passing through the artwork's mirror/rotation, so "home" is always the true device origin, regardless of how the artwork has been transformed (<a href="08-machine-code.html">Ch. 8 §5</a>).</p>
+    </div>
+
+    <h2>3. Path hygiene (normalise before geometry ops)</h2>
+    <p>Even-odd fill, shoelace area, ray-casting, and offsetting all assume reasonable polylines. Clean the input first:</p>
+
+    <h3>3.1 Coincident / duplicate points</h3>
+    <p>Drop consecutive duplicate vertices (within ε) and zero-length segments. They break tangent/direction math (division by ~0) in smoothing, joining, offsetting, and normal computation.</p>
+
+    <figure>
+      <svg viewBox="0 0 640 220" width="640" role="img" aria-label="Removing duplicate points and zero-length segments before running geometry operations">
+        <g font-family="sans-serif">
+          <text x="150" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#4a5568">Before - contains duplicate points</text>
+          <polyline points="40,150 110,90 116,86 180,50 181,49.5 250,110" fill="none" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="40" cy="150" r="4" fill="#2563eb"/>
+          <circle cx="110" cy="90" r="4" fill="#2563eb"/>
+          <circle cx="116" cy="86" r="5" fill="none" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="180" cy="50" r="4" fill="#2563eb"/>
+          <circle cx="181" cy="49.5" r="5" fill="none" stroke="#dc2626" stroke-width="2"/>
+          <circle cx="250" cy="110" r="4" fill="#2563eb"/>
+          <text x="128" y="78" font-size="10" fill="#dc2626">duplicate (ε)</text>
+          <text x="196" y="40" font-size="10" fill="#dc2626">~0-length segment</text>
+
+          <path d="M300 120 h 40" stroke="#94a3b8" stroke-width="2" marker-end="url(#arh)"/>
+
+          <text x="490" y="24" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">After - cleaned</text>
+          <polyline points="380,150 450,90 520,50 590,110" fill="none" stroke="#16a34a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="380" cy="150" r="4" fill="#16a34a"/>
+          <circle cx="450" cy="90" r="4" fill="#16a34a"/>
+          <circle cx="520" cy="50" r="4" fill="#16a34a"/>
+          <circle cx="590" cy="110" r="4" fill="#16a34a"/>
+        </g>
+        <defs>
+          <marker id="arh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Duplicate vertices and zero-length segments (circled red) are removed before tangent, offset, or normal geometry runs on the chain.</figcaption>
+    </figure>
+
+    <h3>3.2 Self-intersecting (non-simple) paths</h3>
+    <p>Imported artwork (hand-drawn, traced, or malformed SVG) may cross itself. Effects and handling:</p>
+    <ul>
+      <li><b>Fill:</b> even-odd gives a <em>predictable, deterministic</em> result on self-intersecting paths (regions covered an odd number of times are filled), but whether that result is <em>desired</em> depends on intent - a self-crossing pentagram or a self-overlapping blob meant to read <b>solid</b> needs <b>non-zero winding</b> or a <b>self-union</b> instead. Pick the fill rule per <a href="02-geometry.html">Ch. 2 §3</a>; the fill itself needs no geometric <em>repair</em>, only the correct rule.</li>
+      <li><b>Signed-area metrics</b> (<a href="02-geometry.html">Ch. 2 §4</a>) become unreliable on self-intersecting loops (positive and negative sub-areas cancel out). If this metric feeds the auto-fill selector, either (a) compute the metric on the <b>even-odd rendered region</b> rather than the raw loop, or (b) detect self-intersection and split the loop into <b>simple sub-loops</b> first.</li>
+      <li><b>Offsetting</b> (<a href="02-geometry.html">Ch. 2 §7</a>) can produce spurious self-overlaps on non-simple input; the stroke-and-subtract construction is fairly robust but still needs the result validated as non-empty.</li>
+    </ul>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Keywords</span>
+      <p><b>Bentley-Ottmann sweep-line</b> - a sweep-line algorithm for detecting segment intersections. <b>Polygon self-union</b> - a boolean OR of a polygon with itself, used to repair the shape and produce a simple boundary.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 260" width="640" role="img" aria-label="The same self-intersecting star path: even-odd yields a hole, non-zero winding fills it solid">
+        <g font-family="sans-serif">
+          <text x="150" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568">even-odd</text>
+          <path d="M200,25 L255.84,196.86 L109.65,90.64 L290.35,90.64 L144.16,196.86 Z"
+                fill="#2563eb" fill-opacity=".85" fill-rule="evenodd" stroke="#1e49b8" stroke-width="2" stroke-linejoin="round"/>
+          <text x="200" y="230" text-anchor="middle" font-size="11" fill="#4a5568">central pentagon hole - covered an even number of times</text>
+
+          <line x1="330" y1="10" x2="330" y2="250" stroke="#dfe5ee" stroke-width="1.4"/>
+
+          <text x="490" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">non-zero winding</text>
+          <path d="M200,25 L255.84,196.86 L109.65,90.64 L290.35,90.64 L144.16,196.86 Z" transform="translate(290,0)"
+                fill="#16a34a" fill-opacity=".85" fill-rule="nonzero" stroke="#166534" stroke-width="2" stroke-linejoin="round"/>
+          <text x="490" y="230" text-anchor="middle" font-size="11" fill="#4a5568">entirely solid - covered a nonzero number of times</text>
+        </g>
+      </svg>
+      <figcaption>The same self-intersecting path (a pentagram drawn as one continuous line), two fill rules give two different results. Neither is geometrically "wrong" - pick the rule according to the artwork's intent (<a href="02-geometry.html">Ch. 2 §3</a>).</figcaption>
+    </figure>
+
+    <h3>3.3 Winding &amp; fill rule</h3>
+    <p>Apply the fill rule per <a href="02-geometry.html">Ch. 2 §3</a>: <b>even-odd</b> for <em>nested</em> holes (winding-independent, deterministic hole detection), but honor the source's <b>non-zero winding</b> - or pre-union overlapping same-winding contours - where <em>overlaps</em> must read solid. Nesting-depth analysis (<a href="02-geometry.html">Ch. 2 §4</a>) is winding-independent and valid in either case.</p>
+
+    <h2>4. Degenerate &amp; empty inputs - the no-crash contract</h2>
+    <p>Enumerate every degenerate case and its required behaviour. Each row must be a graceful no-op or a bounded fallback, never a crash:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Input</th><th>Required behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>Empty document (no visible shapes)</td><td>Emit a valid empty job: preamble + return-home + postamble, no working moves.</td></tr>
+        <tr><td>Shape fully outside the bed</td><td>Per the §2 bed policy (reject/warn/clamp); never silently emit off-bed working moves.</td></tr>
+        <tr><td>Zero-area / collinear "shape"</td><td>No fill (area ≈ 0); emit its outline if it has ≥ 2 distinct points, else skip.</td></tr>
+        <tr><td>Single-point subpath</td><td>Not drawable as a line; skip (optionally emit a dot if the tool supports one).</td></tr>
+        <tr><td>Chain with &lt; 2 points</td><td>Skip (a chain needs ≥ 2 points to be a move).</td></tr>
+        <tr><td>Region thinner than one line spacing</td><td>Fill engine keeps the outline as the sole ring / hatch fallback (<a href="03-fill-algorithms.html">Ch. 3 §6</a>); never leave empty output for a real area.</td></tr>
+        <tr><td>Fill spacing ≤ 0</td><td>Clamp to a positive floor (<a href="03-fill-algorithms.html">Ch. 3 §6</a>).</td></tr>
+        <tr><td>NaN / infinite coordinate</td><td>Reject the shape with a note; never emit NaN to a controller.</td></tr>
+        <tr><td>Enormous shape at tiny spacing</td><td>Caps engage (<a href="11-performance.html">Ch. 11</a>); coarsen the shape + annotate rather than hang.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">This table is the single reference</span>
+      <p>This is the single reference for "what happens when the input is bad"; each engine implements its own row, while the driver checks the document-level rows (empty document, off-bed).</p>
+    </div>
+
+    <h2>5. Stroke variants</h2>
+    <p>Cross-reference to <a href="04-outline-contour.html">Ch. 4 §5b</a>:</p>
+    <ul>
+      <li><b>Dashed / dotted strokes</b> → many short open chains (walk the boundary by arc length, emit dash segments, skip gap segments).</li>
+      <li><b>Variable-width strokes</b> → either expand to a filled region and fill it (<a href="03-fill-algorithms.html">Ch. 3</a>), or draw the centerline once if the tool's mark width already matches.</li>
+    </ul>
+
+    <h2>6. Compound paths &amp; grouping affinity</h2>
+    <p>Cross-reference to <a href="07-toolpath-ordering.html">Ch. 7</a>:</p>
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Affinity key</span>
+      <p>A <b>compound path / glyph</b> (outer boundary + holes) is multiple subpaths that should often stay <b>contiguous</b> in the output. Tag related chains with an <b>affinity key</b> and order the whole group as a unit if contiguity matters; otherwise, minimising raw travel is enough.</p>
+    </div>
+
+    <h2>7. Job lifecycle &amp; cancellation</h2>
+    <p>A single, explicit lifecycle ties together the per-stage behaviour scattered across the previous chapters:</p>
+
+    <pre><code><span class="kw">START</span>
+  ├─ normalise units → world mm (§1)
+  ├─ resolve geometry, path hygiene (§3)
+  ├─ write preamble (units, absolute, tool init, home)                 <span class="cm"># doc 08</span>
+  │
+  ├─ <span class="kw">FOR</span> each layer / tool-group (in output order):                       <span class="cm"># doc 07 §5</span>
+  │     ├─ collect + plan chains (fill/outline/text/pattern)           <span class="cm"># docs 03-06</span>
+  │     ├─ order chains (carry running position)                       <span class="cm"># doc 07</span>
+  │     ├─ emit ordered chains × passes, with group settings           <span class="cm"># doc 08</span>
+  │     ├─ [<span class="kw">checkpoint</span>] report progress; honour <span class="kw">CANCEL</span>                    <span class="cm"># doc 11 §9</span>
+  │     └─ raster shapes (if any), with the same cancel checkpoints    <span class="cm"># doc 09</span>
+  │
+  ├─ write postamble (disengage tool, return home, end)                <span class="cm"># doc 08</span>
+<span class="kw">FINALISE</span></code></pre>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Safe postamble even on cancel</span>
+      <p><b>Cancellation</b> is checked at the same cadence as progress reporting (per shape, per N raster rows). On cancel, a <b>safe postamble</b> (disengage tool + return home) must still be written so the machine is left in a known state - never aborting mid-working-move.</p>
+    </div>
+
+    <p><b>Progress</b> is reported coarsely so the UI stays responsive (<a href="11-performance.html">Ch. 11 §9</a>). <b>Incremental regeneration:</b> only re-plan shapes/layers that changed; cache the rest (<a href="11-performance.html">Ch. 11 §9</a>).</p>
+
+    <h2>8. Checklist (hardening a generator)</h2>
+    <ul>
+      <li>Normalise all source units to world mm at import; a single conversion point.</li>
+      <li>Make the origin/bed mapping explicit; define a bed-bounds policy; keep return-home moves in raw machine coordinates.</li>
+      <li>Clean paths: drop duplicate points / zero-length segments; apply the correct fill rule per <a href="02-geometry.html">Ch. 2 §3</a> (even-odd for nesting; non-zero/union for overlaps).</li>
+      <li>Handle self-intersection (even-odd for fill; metrics on the rendered region, or split into simple loops).</li>
+      <li>Fully implement the degenerate-input table (§4) - every row a graceful no-op or bounded fallback; never crash, never emit NaN.</li>
+      <li>Support dashed &amp; variable-width strokes.</li>
+      <li>Optional: compound-path affinity in ordering.</li>
+      <li>Implement the job lifecycle with cancel checkpoints and a safe postamble on cancel.</li>
+    </ul>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Closing the book</span>
+      <p>From the chain model in Chapter 0, through architecture, geometry, fill algorithms, outlines, single-stroke text, patterns, ordering, machine-code emission, raster, curve fidelity, and performance - this chapter closes the loop by hardening the system against the messy reality of real data. A good generator is not one that has never met a bad input, but one that <em>already has an answer</em> for every bad input.</p>
+    </div>
+
+    <div class="pager">
+      <a href="11-performance.html"><div class="dir">← Previous</div><div class="ttl">11 · Performance &amp; Complexity</div></a>
+      <a class="next" href="index.html"><div class="dir">Finished ↑</div><div class="ttl">Back to cover &amp; contents</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

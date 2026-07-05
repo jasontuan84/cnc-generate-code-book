@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2 · Nền tảng hình học - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 2 · Hình học</span>
+    <h1>Nền tảng hình học</h1>
+    <p class="lead">Mọi nguồn sinh chuỗi - vùng tô, đường viền, chữ, hoa văn - đều dựng trên cùng một tập nhỏ các nguyên thuỷ hình học. Cài đặt đúng một lần, phần còn lại trở nên đơn giản. Tất cả các phép toán ở đây đều <b>độc lập với ngôn ngữ máy</b>: chúng là hình học tính toán 2‑D thuần tuý.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Chương này nằm ở đâu trong pipeline</span>
+      <p>Đây là bộ công cụ cho <em>giai đoạn 1 (phân giải hình học)</em> và <em>giai đoạn 2 (trích xuất nguyên thuỷ)</em> đã giới thiệu ở <a href="01-kien-truc.html">Chương 1</a>. Sau chương này, mọi bản vẽ đã trở thành các polyline sạch cùng thông tin trong/ngoài - sẵn sàng cho các bộ tô ở <a href="03-thuat-toan-to.html">Chương 3</a> và đường viền ở <a href="04-duong-vien.html">Chương 4</a>.</p>
+    </div>
+
+    <h2>1. Làm phẳng đường cong (Bézier / cung → polyline)</h2>
+    <p>Máy di chuyển từ điểm đến điểm, nên mọi đường cong phải được xấp xỉ bằng các đoạn thẳng ngắn. Tham số duy nhất là <b>dung sai (tolerance)</b>: khoảng cách tối đa cho phép giữa đường cong thật và dây cung của polyline.</p>
+
+    <figure>
+      <svg viewBox="0 0 680 260" width="680" role="img" aria-label="So sánh đường cong Bézier trơn, polyline dung sai thô răng cưa, và polyline dung sai mịn">
+        <rect x="12" y="12" width="656" height="236" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- reference true curve (faint, all three panels share same shape S) -->
+        <!-- Panel 1: true curve -->
+        <text x="120" y="40" text-anchor="middle" font-size="12" fill="#8a94a6" font-family="sans-serif">Đường cong thật</text>
+        <path d="M50 210 C 80 90, 190 90, 120 150 C 60 200, 170 210, 200 110" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
+
+        <!-- Panel 2: coarse polyline (few chords, visible gap) -->
+        <text x="360" y="40" text-anchor="middle" font-size="12" fill="#dc2626" font-family="sans-serif" font-weight="700">Dung sai THÔ (răng cưa)</text>
+        <!-- faint true curve -->
+        <path d="M290 210 C 320 90, 430 90, 360 150 C 300 200, 410 210, 440 110" fill="none" stroke="#e2d6f5" stroke-width="2.5"/>
+        <!-- coarse chords -->
+        <polyline points="290,210 355,120 360,150 320,185 440,110" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/>
+        <circle cx="290" cy="210" r="3" fill="#2563eb"/><circle cx="355" cy="120" r="3" fill="#2563eb"/><circle cx="360" cy="150" r="3" fill="#2563eb"/><circle cx="320" cy="185" r="3" fill="#2563eb"/><circle cx="440" cy="110" r="3" fill="#2563eb"/>
+        <!-- tolerance gap arrow -->
+        <line x1="392" y1="103" x2="405" y2="128" stroke="#d97706" stroke-width="1.6" marker-end="url(#arT)" marker-start="url(#arT)"/>
+        <text x="418" y="118" font-size="10.5" fill="#d97706" font-family="sans-serif">độ lệch</text>
+
+        <!-- Panel 3: fine polyline (many chords, hugs curve) -->
+        <text x="595" y="40" text-anchor="middle" font-size="12" fill="#16a34a" font-family="sans-serif" font-weight="700">Dung sai MỊN</text>
+        <path d="M525 210 C 555 90, 665 90, 595 150 C 535 200, 645 210, 675 110" fill="none" stroke="#dfeee3" stroke-width="4"/>
+        <polyline points="525,210 540,160 560,120 590,108 615,120 610,150 585,175 560,180 555,175 580,160 630,130 675,110" fill="none" stroke="#16a34a" stroke-width="2" stroke-linejoin="round"/>
+
+        <defs>
+          <marker id="arT" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#d97706"/></marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#7c3aed"></i> Đường cong thật</span>
+        <span><i style="border-color:#2563eb"></i> Polyline làm phẳng</span>
+        <span><i style="border-color:#d97706"></i> Độ lệch dây cung / cung = dung sai</span>
+      </div>
+      <figcaption>Dung sai là khoảng cách lớn nhất giữa <b>dây cung</b> (đoạn thẳng) và <b>cung</b> (đường cong thật). Dung sai thô ⇒ ít điểm nhưng các cạnh phẳng lộ rõ (răng cưa); dung sai mịn ⇒ nhiều điểm nhưng bám sát đường cong.</figcaption>
+    </figure>
+
+    <h3>Mẹo "phóng to" (dung sai đồng nhất theo không gian thế giới)</h3>
+    <p>Nhiều thư viện vector làm phẳng với dung sai cố định tính theo <em>đơn vị đường dẫn</em> (path units), quá thô ở thang milimet và tạo ra những đường cong bị vát cạnh thấy rõ (các cạnh phẳng của chữ "O" hay "S"). Cách sửa bền vững, không phụ thuộc thư viện:</p>
+
+    <div class="steps">
+      <span class="step">1 · Phóng to đường dẫn hệ số <b>k</b> (ví dụ <code>k = 25</code>)</span>
+      <span class="arrow">→</span>
+      <span class="step">2 · Làm phẳng trong không gian đã phóng to</span>
+      <span class="arrow">→</span>
+      <span class="step">3 · Thu mỗi điểm kết quả về <code>1/k</code></span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 250" width="680" role="img" aria-label="Mẹo phóng to: phóng to k lần, làm phẳng, rồi thu nhỏ lại">
+        <rect x="12" y="12" width="656" height="226" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- small original -->
+        <text x="95" y="40" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">Gốc (nhỏ)</text>
+        <path d="M60 180 C 60 90, 150 90, 150 140" fill="none" stroke="#7c3aed" stroke-width="2.5"/>
+        <text x="95" y="210" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">dung sai TL cố định ⇒ thô</text>
+
+        <path d="M180 130 h40" stroke="#94a3b8" stroke-width="2" marker-end="url(#arS)"/>
+        <text x="200" y="120" text-anchor="middle" font-size="11" fill="#2563eb" font-family="sans-serif" font-weight="700">× k</text>
+
+        <!-- enlarged, flattened finely relative to same TL -->
+        <text x="360" y="40" text-anchor="middle" font-size="12" fill="#16a34a" font-family="sans-serif" font-weight="700">Phóng to k lần → làm phẳng</text>
+        <path d="M255 210 C 255 60, 460 60, 460 150" fill="none" stroke="#dfeee3" stroke-width="4"/>
+        <polyline points="255,210 258,160 268,120 288,92 320,74 360,68 400,74 432,92 452,120 460,150" fill="none" stroke="#16a34a" stroke-width="2" stroke-linejoin="round"/>
+        <text x="360" y="228" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">cùng dung sai TL, giờ mịn hơn k lần</text>
+
+        <path d="M490 130 h40" stroke="#94a3b8" stroke-width="2" marker-end="url(#arS)"/>
+        <text x="510" y="120" text-anchor="middle" font-size="11" fill="#2563eb" font-family="sans-serif" font-weight="700">÷ k</text>
+
+        <!-- final small smooth -->
+        <text x="600" y="40" text-anchor="middle" font-size="12" fill="#16a34a" font-family="sans-serif" font-weight="700">Thu nhỏ lại</text>
+        <polyline points="560,180 561,150 566,125 576,107 592,98 610,95 628,98" fill="none" stroke="#16a34a" stroke-width="2" stroke-linejoin="round"/>
+        <text x="600" y="210" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">mượt, ~0,02 mm/cạnh</text>
+
+        <defs>
+          <marker id="arS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Dung sai hiệu dụng ≈ <code>dungSaiThưViện / k</code>. Với <code>k = 25</code> ta được các cạnh cỡ ~0,02 mm - nhỏ hơn độ phân giải của bất kỳ bút, dao hay tia laser nào, nên đường cong đọc ra là trơn.</figcaption>
+    </figure>
+
+    <p>Từ khoá cần nhớ: <em>adaptive / subdivision flattening with tolerance control</em> (làm phẳng thích nghi / chia nhỏ có kiểm soát dung sai).</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Đánh đổi: dung sai càng nhỏ, đầu ra càng lớn</span>
+      <p>Dung sai nhỏ hơn ⇒ nhiều điểm hơn ⇒ tệp đầu ra lớn hơn và (trên một số bộ điều khiển) truyền chậm hơn. Hãy chọn dung sai ở mức "vừa dưới bề rộng vệt của công cụ". <b>~0,02 mm là mặc định phổ quát an toàn</b> cho tranh cỡ milimet.</p>
+    </div>
+
+    <h3>Ngữ cảnh mịn và ngữ cảnh thô</h3>
+    <p>Dùng dung sai <b>mịn</b> cho mọi hình học mà điểm của nó trở thành <em>đầu ra được phát</em> hoặc phải <em>khớp với đầu ra khác</em>: đường viền, đường cong chữ (glyph), và bất kỳ biên vùng nào mà giao điểm của nó tạo ra điểm đầu/cuối của nét tô hay hoa văn thấy được. Dung sai <b>thô hơn</b> chỉ chấp nhận được cho các biên dùng trong <em>quyết định</em> không phát ra đỉnh nào và chịu được sai số dưới ~0,05 mm: ước lượng metric hình dạng, giới hạn đếm số ô lát, kiểm tra trong/ngoài thô.</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Không bao giờ xén nét tô thấy được vào một biên thô</span>
+      <p>Điểm đầu/cuối của chúng sẽ rơi lệch khỏi cạnh thật và không khớp với một đường viền mịn (chính là lỗi hở mạch nêu ở <a href="10-do-muot.html">10 §2.4</a>). Hãy <b>tập trung hoá</b> cả hai dung sai vào một nơi để cả hệ thống nhất quán.</p>
+    </div>
+
+    <h2>2. Biểu diễn polyline / polygon</h2>
+    <ul>
+      <li>Một <b>polyline</b> là danh sách điểm có thứ tự. <b>Mở</b> = hai đầu mút khác nhau; <b>kín</b> = điểm đầu ≈ điểm cuối (trong phạm vi một epsilon).</li>
+      <li>Kiểm tra <em>kín</em> bằng <code>|đầu − cuối| &lt; ε</code> <b>và</b> có ít nhất 3 (thường ≥4) điểm.</li>
+      <li>Một hình có lỗ là một <b>tập subpath</b> (biên ngoài + các biên trong). Giữ chúng là các polyline riêng và để <em>quy tắc tô</em> quyết định trong/ngoài; đừng cố gộp chúng thành một vòng duy nhất.</li>
+    </ul>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Epsilon: so sánh bằng bình phương khoảng cách</span>
+      <p>Dùng epsilon theo bình phương khoảng cách (<code>ε²</code>) cho các phép kiểm tra "gần nhau" để tránh <code>sqrt</code>. Giá trị điển hình <code>ε = 1e‑3</code> mm.</p>
+    </div>
+
+    <h2>3. Quy tắc tô: even-odd vs non-zero winding</h2>
+    <p>Để quyết định điểm nào là "bên trong" một hình nhiều subpath:</p>
+    <div class="cards">
+      <div class="card"><h4>Even-odd (chẵn‑lẻ / parity)</h4><p>Một điểm ở trong nếu một tia phát ra từ nó cắt biên một số <b>lẻ</b> lần. Không phụ thuộc chiều quấn của subpath. <b>Đây là mặc định an toàn</b> cho tranh nhập tuỳ ý, lỗ chữ (glyph counter) và các vòng đồng tâm.</p></div>
+      <div class="card"><h4>Non-zero winding (winding khác‑không)</h4><p>Cộng các lần cắt <b>có dấu</b>; ở trong nếu tổng ≠ 0. Cần chiều quấn nhất quán; có thể tô cả những vùng mà even-odd coi là lỗ.</p></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 300" width="680" role="img" aria-label="Even-odd và non-zero winding: hình có lỗ và trường hợp hai vùng chồng nhau">
+        <rect x="12" y="12" width="656" height="276" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- LEFT: donut, ray crossing count -->
+        <text x="175" y="40" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif" font-weight="700">Hình có lỗ · đếm số lần cắt của tia</text>
+        <!-- outer solid ring with hole (even-odd: fill annulus) -->
+        <path d="M70 90 h210 v150 h-210 z M120 130 h110 v70 h-110 z" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2" fill-rule="evenodd"/>
+        <!-- point inside solid part -->
+        <circle cx="95" cy="165" r="4" fill="#16a34a"/>
+        <text x="95" y="185" text-anchor="middle" font-size="10" fill="#16a34a" font-family="sans-serif">P1</text>
+        <!-- ray from P1 to right, crosses outer(1) inner-left(2) inner-right(3) outer(4)?? -->
+        <line x1="95" y1="165" x2="330" y2="165" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arR)"/>
+        <!-- crossing dots for P1: at x=120(inner L),230(inner R),280(outer R) => 3 crossings odd => inside -->
+        <circle cx="120" cy="165" r="3.5" fill="#dc2626"/><circle cx="230" cy="165" r="3.5" fill="#dc2626"/><circle cx="280" cy="165" r="3.5" fill="#dc2626"/>
+        <text x="215" y="80" text-anchor="middle" font-size="10.5" fill="#2563eb" font-family="sans-serif">P1: 3 lần cắt (lẻ) ⇒ TRONG</text>
+
+        <!-- point inside hole -->
+        <circle cx="175" cy="220" r="4" fill="#dc2626"/>
+        <text x="175" y="258" text-anchor="middle" font-size="10" fill="#4a5568" font-family="sans-serif">P2 (trong lỗ)</text>
+        <line x1="175" y1="220" x2="330" y2="220" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arH)"/>
+        <!-- P2 crosses inner R(230) outer R(280) => 2 crossings even => outside(hole) -->
+        <circle cx="230" cy="220" r="3.5" fill="#dc2626"/><circle cx="280" cy="220" r="3.5" fill="#dc2626"/>
+        <text x="255" y="278" text-anchor="middle" font-size="10.5" fill="#7c3aed" font-family="sans-serif">P2: 2 lần cắt (chẵn) ⇒ NGOÀI = lỗ</text>
+
+        <!-- RIGHT: two overlapping blobs -->
+        <text x="500" y="40" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif" font-weight="700">Hai vùng CHỒNG nhau</text>
+        <!-- even-odd result: overlap becomes hole -->
+        <text x="440" y="72" font-size="11" fill="#dc2626" font-family="sans-serif" font-weight="700">even-odd</text>
+        <path d="M400 90 a45 45 0 1 0 0.1 0 z M445 90 a45 45 0 1 0 0.1 0 z" fill="#f3ede1" stroke="#dc2626" stroke-width="2" fill-rule="evenodd"/>
+        <text x="463" y="118" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">lỗ ngoài ý muốn</text>
+
+        <!-- non-zero result: solid union -->
+        <text x="560" y="200" font-size="11" fill="#16a34a" font-family="sans-serif" font-weight="700">non-zero</text>
+        <path d="M525 215 a40 40 0 1 0 0.1 0 z M565 215 a40 40 0 1 0 0.1 0 z" fill="#f3ede1" stroke="#16a34a" stroke-width="2" fill-rule="nonzero"/>
+        <text x="545" y="278" text-anchor="middle" font-size="10" fill="#16a34a" font-family="sans-serif">hợp nhất đặc</text>
+
+        <defs>
+          <marker id="arR" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/></marker>
+          <marker id="arH" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/></marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><span class="dot" style="background:#16a34a"></span> Điểm bên trong</span>
+        <span><span class="dot" style="background:#dc2626"></span> Điểm cắt biên</span>
+        <span><i style="border-color:#2563eb;border-top-style:dashed"></i> Tia thử</span>
+      </div>
+      <figcaption>Trái: với hình có lỗ, số lần cắt <b>lẻ</b> ⇒ trong, <b>chẵn</b> ⇒ ngoài (lỗ). Phải: khi hai vùng cùng chiều <em>chồng</em> lên nhau, even-odd khoét một <b style="color:#dc2626">lỗ ngoài ý muốn</b> ở phần giao, còn non-zero giữ nguyên vùng đặc.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Quyết định chính xác</span>
+      <p>Mô hình lỗ / độ lồng ở §4 là một mô hình <b>even-odd</b>, và even-odd là mặc định an toàn cho lỗ <em>lồng nhau</em> (counter, donut) bất kể chiều quấn. Nhưng even-odd khoét một <b>lỗ ngoài ý muốn ở mọi nơi hai contour chồng nhau</b> (thay vì lồng) - ví dụ hai vệt cùng chiều chồng lên nhau, hay một dấu phụ chồng lên glyph, mà người thiết kế muốn đọc là <b>đặc</b>. Nên quy tắc chính xác là:</p>
+      <ul>
+        <li>Subpath <b>lồng nhau</b> (một lỗ nằm hoàn toàn trong lỗ khác) → even-odd là đúng và độc lập chiều quấn; hãy dùng nó.</li>
+        <li>Subpath <b>chồng nhau</b> mà lẽ ra phải hợp thành vùng đặc → tôn trọng quy tắc tô <b>non-zero winding</b> đã khai báo của nguồn (đa số font và SVG dùng nó), hoặc <b>hợp nhất trước</b> (pre-union) các contour cùng chiều bị chồng (<a href="12-truong-hop-bien.html">12 §3.2</a>) <em>trước khi</em> tô even-odd.</li>
+      </ul>
+    </div>
+
+    <p>Đây là lý do việc raster hoá glyph (<a href="05-chu-net-don.html">05 §3.1</a>) tô bằng <b>non-zero winding</b>: các contour chồng nhau của một font phải đọc ra là đặc. Phép kiểm tra độ lồng (§4) độc lập chiều quấn nên vẫn đúng dưới cả hai quy tắc.</p>
+
+    <h3>Phép kiểm tra điểm trong đa giác (point-in-polygon)</h3>
+    <p>Thuật toán chuẩn <b>ray-casting / crossing-number</b>: bắn một tia ngang và đếm số cạnh bị cắt, dùng quy tắc nửa mở theo chiều dọc <code>(a.y &gt; p.y) != (b.y &gt; p.y)</code> để đếm đỉnh chung đúng một lần. Độ phức tạp O(n) mỗi truy vấn. Dùng cho việc phát hiện lỗ và cho phép thử "điểm giữa này có ở trong không?" khi xén (§6).</p>
+
+    <pre><code><span class="cm">// Ray-casting: điểm p có nằm trong polyline poly không?</span>
+<span class="kw">function</span> <span class="fn">pointInPolygon</span>(p, poly) {
+  <span class="kw">let</span> inside = <span class="st">false</span>;
+  <span class="kw">for</span> (<span class="kw">let</span> i = 0, j = poly.length - 1; i &lt; poly.length; j = i++) {
+    <span class="kw">const</span> a = poly[i], b = poly[j];
+    <span class="cm">// quy tắc nửa mở theo trục dọc: đếm mỗi đỉnh chung đúng 1 lần</span>
+    <span class="kw">if</span> ((a.y &gt; p.y) !== (b.y &gt; p.y)) {
+      <span class="kw">const</span> xCross = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
+      <span class="kw">if</span> (p.x &lt; xCross) inside = !inside;
+    }
+  }
+  <span class="kw">return</span> inside;
+}</code></pre>
+
+    <h2>4. Phát hiện lỗ &amp; độ lồng (nesting depth kiểu even-odd)</h2>
+    <p>Để biết subpath nào là đặc và subpath nào là lỗ:</p>
+    <ol>
+      <li>Với mỗi subpath, tính <b>diện tích có dấu</b> bằng <b>công thức shoelace</b>: <code>A = ½ Σ (xᵢ·yᵢ₊₁ − xᵢ₊₁·yᵢ)</code>. <code>|A|</code> là diện tích; dấu cho biết chiều quấn.</li>
+      <li>Tính <b>độ lồng (nesting depth)</b> cho mỗi subpath bằng cách thử <em>một trong các đỉnh của nó</em> với mọi subpath <em>lớn hơn</em> bằng point-in-polygon. Depth = số subpath lớn hơn chứa nó.</li>
+      <li><b>Depth chẵn ⇒ đặc</b> (cộng vào diện tích ròng); <b>depth lẻ ⇒ lỗ</b> (trừ đi).</li>
+    </ol>
+
+    <figure>
+      <svg viewBox="0 0 680 290" width="680" role="img" aria-label="Độ lồng của các vòng đồng tâm và lý do phải thử một đỉnh chứ không phải trọng tâm">
+        <rect x="12" y="12" width="656" height="266" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- LEFT: concentric rings with depth labels -->
+        <text x="180" y="40" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif" font-weight="700">Vòng đồng tâm · độ lồng</text>
+        <!-- depth 0 outer solid -->
+        <rect x="70" y="60" width="220" height="200" rx="6" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <!-- depth 1 hole -->
+        <rect x="105" y="90" width="150" height="140" rx="5" fill="#ffffff" stroke="#d9cdb4" stroke-width="2"/>
+        <!-- depth 2 solid island -->
+        <rect x="140" y="120" width="80" height="80" rx="4" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <text x="180" y="80" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif" font-weight="700">depth 0 · ĐẶC</text>
+        <text x="180" y="107" text-anchor="middle" font-size="11" fill="#dc2626" font-family="sans-serif" font-weight="700">depth 1 · LỖ</text>
+        <text x="180" y="165" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">depth 2</text>
+        <text x="180" y="180" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">ĐẶC</text>
+
+        <!-- RIGHT: donut, centroid vs vertex test -->
+        <text x="500" y="40" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif" font-weight="700">Thử ĐỈNH, không thử trọng tâm</text>
+        <!-- donut two concentric circles same center -->
+        <circle cx="500" cy="160" r="85" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <circle cx="500" cy="160" r="45" fill="#ffffff" stroke="#d9cdb4" stroke-width="2"/>
+        <!-- shared centroid -->
+        <circle cx="500" cy="160" r="4" fill="#dc2626"/>
+        <text x="500" y="152" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">trọng tâm chung</text>
+        <text x="500" y="205" text-anchor="middle" font-size="9.5" fill="#dc2626" font-family="sans-serif">(test thất bại)</text>
+        <!-- vertex on inner ring -->
+        <circle cx="545" cy="160" r="4.5" fill="#16a34a"/>
+        <line x1="545" y1="160" x2="620" y2="160" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arV)"/>
+        <text x="583" y="150" text-anchor="middle" font-size="10" fill="#16a34a" font-family="sans-serif">đỉnh vòng trong</text>
+        <text x="583" y="182" text-anchor="middle" font-size="9.5" fill="#16a34a" font-family="sans-serif">rõ ràng trong vòng ngoài</text>
+
+        <defs>
+          <marker id="arV" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#16a34a"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Trái: độ lồng tăng dần theo các vòng lồng nhau; chẵn thì đặc, lẻ thì lỗ. Phải: hai vòng đồng tâm (donut, hay ngoài/trong của chữ "O") <b>chung trọng tâm</b>, nên test trọng tâm thất bại. Một <b>đỉnh biên</b> thì rõ ràng ở trong hoặc ngoài vòng kia.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Vì sao thử một đỉnh, không thử trọng tâm</span>
+      <p>Hai vòng đồng tâm (một donut, hay ngoài/trong của chữ "O") có thể có cùng trọng tâm, nên test trọng tâm sẽ thất bại. Một đỉnh biên thì hoặc chắc chắn ở trong, hoặc chắc chắn ở ngoài vòng kia. Điều này khiến độ lồng <b>độc lập chiều quấn</b> và đúng cho cả donut lẫn lỗ chữ.</p>
+    </div>
+
+    <p>Diện tích ròng = Σ(diện tích đặc) − Σ(diện tích lỗ). Số lỗ = số subpath có depth lẻ.</p>
+
+    <h2>5. Bao lồi, hộp bao định hướng &amp; metric hình dạng</h2>
+    <p><a href="03-thuat-toan-to.html">Bộ chọn tô tự động (Chương 3)</a> phân loại một vùng từ các metric vô hướng rẻ tiền. Hãy tính chúng một lần:</p>
+
+    <h3>Bao lồi (convex hull)</h3>
+    <p>Thuật toán <b>Andrew's monotone-chain</b>: sắp xếp điểm theo (x, rồi y), dựng nửa dưới rồi nửa trên của bao bằng phép thử rẽ hướng qua tích chéo (cross-product), độ phức tạp O(n log n). Bao lồi cho cả một thước đo độ lồi lẫn cơ sở để dựng hộp bao định hướng.</p>
+
+    <h3>Hộp bao định hướng diện tích nhỏ nhất (OBB)</h3>
+    <p><b>Rotating calipers</b>, dựa trên định lý rằng một cạnh của hình chữ nhật diện tích nhỏ nhất phải trùng phương với một cạnh của bao lồi: với mỗi cạnh của bao, chiếu tất cả đỉnh bao lên hướng cạnh đó và hướng vuông góc, lấy độ trải rộng, tính diện tích hình chữ nhật, giữ lại giá trị nhỏ nhất. Ghi lại:</p>
+    <ul>
+      <li><b>L</b> = chiều dài cạnh dài, <b>W</b> = chiều dài cạnh ngắn,</li>
+      <li><b>θ</b> = hướng của trục dài (độ),</li>
+      <li><b>tâm (center)</b>.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 300" width="680" role="img" aria-label="Bao lồi và hộp bao định hướng nhỏ nhất với L, W và góc theta">
+        <rect x="12" y="12" width="656" height="276" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- an elongated tilted blob (points) -->
+        <!-- shape polygon (concave-ish) -->
+        <polygon points="150,230 210,200 300,150 380,110 430,95 420,130 340,175 250,220 190,250" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5"/>
+        <!-- sample points -->
+        <g fill="#94a3b8">
+          <circle cx="150" cy="230" r="3"/><circle cx="210" cy="200" r="3"/><circle cx="300" cy="150" r="3"/><circle cx="380" cy="110" r="3"/><circle cx="430" cy="95" r="3"/><circle cx="420" cy="130" r="3"/><circle cx="340" cy="175" r="3"/><circle cx="250" cy="220" r="3"/><circle cx="190" cy="250" r="3"/>
+        </g>
+        <!-- convex hull (violet) -->
+        <polygon points="150,230 430,95 420,130 190,250" fill="none" stroke="#7c3aed" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="470" y="90" font-size="11" fill="#7c3aed" font-family="sans-serif" font-weight="700">bao lồi</text>
+
+        <!-- OBB rotated rectangle (blue), aligned to long axis -->
+        <!-- long axis direction ~ from (150,230) to (430,95): angle -->
+        <polygon points="147,238 434,89 447,116 160,265" fill="none" stroke="#2563eb" stroke-width="2"/>
+        <!-- long axis line -->
+        <line x1="153" y1="251" x2="440" y2="102" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="3 3"/>
+        <text x="470" y="120" font-size="11" fill="#2563eb" font-family="sans-serif" font-weight="700">OBB</text>
+
+        <!-- L label along long side -->
+        <text x="300" y="150" transform="rotate(-27 300 150)" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700" dy="-8">L (cạnh dài)</text>
+        <!-- W label short side -->
+        <text x="450" y="102" transform="rotate(63 450 102)" font-size="11" fill="#2563eb" font-family="sans-serif" font-weight="700" dy="14">W</text>
+
+        <!-- theta angle at bottom-left corner -->
+        <line x1="147" y1="238" x2="240" y2="238" stroke="#d97706" stroke-width="1.4"/>
+        <path d="M200 238 A 53 53 0 0 0 189 213" fill="none" stroke="#d97706" stroke-width="1.4"/>
+        <text x="215" y="228" font-size="12" fill="#d97706" font-family="sans-serif" font-weight="700">θ</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#7c3aed;border-top-style:dashed"></i> Bao lồi (monotone chain)</span>
+        <span><i style="border-color:#2563eb"></i> OBB (rotating calipers)</span>
+        <span><i style="border-color:#d97706"></i> θ · hướng trục dài</span>
+      </div>
+      <figcaption>Bao lồi bọc sát tập điểm; OBB là hình chữ nhật diện tích nhỏ nhất, có một cạnh trùng phương với một cạnh của bao. Hướng "trục chính" θ này chính là hướng mà các bộ tô nối liền căn theo (tô dọc trục dài ⇒ các đường chạy dài nhất, ít lần đổi hướng nhất).</figcaption>
+    </figure>
+
+    <h3>Các metric dẫn xuất (đều chuẩn hoá, rẻ, so sánh được)</h3>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Công thức</th><th>Ý nghĩa</th></tr></thead>
+      <tbody>
+        <tr><td><b>area</b> (diện tích)</td><td>diện tích ròng (§4)</td><td>diện tích tô thật</td></tr>
+        <tr><td><b>perimeter</b> (chu vi)</td><td>Σ độ dài đoạn</td><td>độ dài biên</td></tr>
+        <tr><td><b>elongation</b> (độ thuôn)</td><td><code>L / W</code></td><td>1 = gần vuông, lớn = thanh mảnh</td></tr>
+        <tr><td><b>rectangularity</b></td><td><code>area / (L·W)</code></td><td>lấp đầy OBB đến đâu (1 = một hình chữ nhật)</td></tr>
+        <tr><td><b>convexity (solidity)</b></td><td><code>area / hullArea</code></td><td>1 = lồi, &lt;1 = lõm / gai</td></tr>
+        <tr><td><b>compactness</b> (độ nén)</td><td><code>4π·area / perimeter²</code></td><td>1 = một đĩa tròn, →0 = dài / như mạng nhện</td></tr>
+        <tr><td><b>mean stroke width</b></td><td><code>2·area / perimeter</code></td><td>độ dày cục bộ trung bình của vùng</td></tr>
+        <tr><td><b>width in lines</b></td><td><code>meanWidth / spacing</code></td><td>bao nhiêu lượt tô vừa ngang qua nó</td></tr>
+        <tr><td><b>holes</b> (số lỗ)</td><td>số subpath có depth lẻ</td><td>topo (topology)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Chỉ là hình học, không phải machine learning</span>
+      <p>Những metric này là <em>toàn bộ</em> đầu vào cho quyết định tô tự động - không ML, không mớ heuristic hỗn độn, chỉ là hình học diễn giải được. Đẳng thức <code>mean stroke width = 2A/P</code> là "độ dày trung bình" cho một vùng dài mảnh (diện tích ≈ dài × rộng, chu vi ≈ 2 × dài).</p>
+    </div>
+
+    <h2>6. Xén một polyline vào một vùng</h2>
+    <p>Các bộ tô và hoa văn sinh đường trên toàn bộ hộp bao, rồi chỉ giữ phần nằm <em>trong</em> vùng. Có hai nhu cầu phổ biến:</p>
+
+    <h3>Đường quét thẳng cắt các subpath (đường nhanh)</h3>
+    <p>Với một đường quét ngang ở độ cao <code>y</code>, tìm mọi điểm cắt cạnh, sắp xếp các giá trị x, và ghép cặp: <code>[x0,x1] [x2,x3] …</code>. Mỗi cặp là một khoảng bên trong (đây chính là quy tắc even-odd áp cho một đường thẳng). Dùng bởi hatch / zigzag (<a href="03-thuat-toan-to.html">Chương 3</a>); độ phức tạp O(số cạnh) mỗi đường quét.</p>
+
+    <figure>
+      <svg viewBox="0 0 680 260" width="680" role="img" aria-label="Đường quét ngang cắt biên vùng, sắp xếp và ghép cặp giao điểm thành các khoảng bên trong">
+        <rect x="12" y="12" width="656" height="236" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+        <!-- region with a notch (creates 4 crossings on one scanline) -->
+        <path d="M90 60 L 590 60 L 590 210 L 380 210 L 380 130 L 300 130 L 300 210 L 90 210 Z" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <!-- scanline through notch -->
+        <line x1="40" y1="165" x2="640" y2="165" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4"/>
+        <text x="52" y="158" font-size="11" fill="#8a94a6" font-family="sans-serif">y</text>
+        <!-- crossings: x=90(x0),300(x1),380(x2),590(x3) -->
+        <circle cx="90" cy="165" r="4" fill="#dc2626"/><circle cx="300" cy="165" r="4" fill="#dc2626"/>
+        <circle cx="380" cy="165" r="4" fill="#dc2626"/><circle cx="590" cy="165" r="4" fill="#dc2626"/>
+        <text x="90" y="185" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">x0</text>
+        <text x="300" y="185" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">x1</text>
+        <text x="380" y="185" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">x2</text>
+        <text x="590" y="185" text-anchor="middle" font-size="10" fill="#dc2626" font-family="sans-serif">x3</text>
+        <!-- inside spans (kept) blue -->
+        <line x1="90" y1="165" x2="300" y2="165" stroke="#2563eb" stroke-width="3.5"/>
+        <line x1="380" y1="165" x2="590" y2="165" stroke="#2563eb" stroke-width="3.5"/>
+        <text x="195" y="150" text-anchor="middle" font-size="10.5" fill="#2563eb" font-family="sans-serif" font-weight="700">[x0,x1] giữ</text>
+        <text x="485" y="150" text-anchor="middle" font-size="10.5" fill="#2563eb" font-family="sans-serif" font-weight="700">[x2,x3] giữ</text>
+        <text x="340" y="150" text-anchor="middle" font-size="10.5" fill="#8a94a6" font-family="sans-serif">khe (bỏ)</text>
+      </svg>
+      <figcaption>Đường quét cắt biên ở 4 điểm; sắp xếp x rồi ghép cặp <code>[x0,x1]</code> và <code>[x2,x3]</code> cho ra hai khoảng bên trong. Phần khe ở giữa (giữa x1 và x2) bị bỏ vì nằm ngoài vùng.</figcaption>
+    </figure>
+
+    <h3>Polyline bất kỳ cắt vùng bất kỳ (đường tổng quát)</h3>
+    <p>Với mỗi đoạn của polyline:</p>
+    <ol>
+      <li>Tìm mọi tham số giao <code>t ∈ (0,1)</code> với biên vùng.</li>
+      <li>Sắp xếp chúng; chúng chia đoạn thành các đoạn con.</li>
+      <li>Giữ một đoạn con nếu <b>điểm giữa</b> của nó nằm trong vùng. Bất kỳ phép thử even-odd nào cũng dùng được ở đây - ray-cast tự viết ở §3, hoặc hàm <code>contains()</code> even-odd của thư viện hình học.</li>
+      <li>Nối các đoạn con được giữ liền kề thành các chuỗi đầu ra; một khe hở sẽ đẩy (flush) chuỗi hiện tại ra.</li>
+    </ol>
+    <p>Từ khoá: <em>segment–polygon clipping</em>. Dùng bởi đường cong lấp đầy không gian (space-filling curve) và lát hoa văn (pattern tiling).</p>
+
+    <h3>Xén nửa mặt phẳng (cho các ô)</h3>
+    <p><b>Sutherland–Hodgman</b> xén đa giác vào một nửa mặt phẳng là nguyên thuỷ cho các ô Voronoi (<a href="03-thuat-toan-to.html">Chương 3</a>): xén một đa giác về phía của đường trung trực gần một điểm site hơn.</p>
+
+    <h2>7. Offset một vùng vào trong (inset)</h2>
+    <p>Tô contour / xoắn ốc và bù kerf cần một phép <b>offset vào trong</b> một vùng kín theo khoảng cách <code>d</code>. Lặp lại việc inset theo khoảng cách dòng tô cho ra các vòng đồng tâm mà những bộ tô đó vẽ. Có hai cách dựng bền vững; chọn theo những gì môi trường của bạn cung cấp.</p>
+
+    <h3>Method A - stroke-and-subtract (bào mòn boolean)</h3>
+    <p>Một cách dựng không phụ thuộc thư viện, dùng một bộ stroke:</p>
+    <ol>
+      <li>Stroke biên với bề rộng bút <code>2d</code> (nét stroke phủ đều hai bên đường viền, <code>d</code> vào trong và <code>d</code> ra ngoài), dùng mối nối <b>miter</b> và đầu <b>flat</b>.</li>
+      <li><b>Trừ</b> dải stroke đó khỏi vùng gốc.</li>
+      <li>Kết quả là vùng bị co lại <code>d</code> ở mọi phía; lỗ nở vào trong đúng cách, và các cổ thắt mỏng tự động bị bấu đứt thành những mảnh riêng.</li>
+    </ol>
+    <p>Từ khoá: <em>polygon offsetting / erosion</em> (còn gọi là bào mòn Minkowski bằng một đĩa; stroke-and-subtract xấp xỉ nó bằng kiểu mối nối đã chọn). Cách này chính xác và độc lập độ phân giải, nhưng <b>đòi hỏi một engine boolean/offset bền vững</b> (một thư viện lớp Clipper).</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Đừng thay bằng inset ngây thơ per-vertex</span>
+      <p>Đừng dùng cách inset ngây thơ "dời mỗi đỉnh một đoạn <code>d</code> dọc theo pháp tuyến phân giác góc": nó <b>tự cắt nhau</b> ngay khi vùng thực sự lõm (một đầu nhọn của ngôi sao, mặt trong của chữ "L"), và nó không hề biết đến lỗ hay đến việc vùng tách thành nhiều mảnh - nó âm thầm sinh ra những vòng cắt chéo, rác. Nếu bạn chỉ có inset per-vertex, nó chỉ an toàn cho <b>một vòng đơn, gần lồi</b>; phát hiện mọi trường hợp khác và rơi xuống Method B.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 270" width="680" role="img" aria-label="Inset ngây thơ per-vertex tự cắt nhau ở góc lõm so với offset đúng">
+        <rect x="12" y="12" width="656" height="234" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <!-- LEFT: naive per-vertex inset self-intersects on an L-shape -->
+        <text x="185" y="40" text-anchor="middle" font-size="12.5" fill="#dc2626" font-family="sans-serif" font-weight="700">Naive per-vertex · tự cắt ở góc lõm</text>
+        <!-- L shape -->
+        <path d="M70 70 L 300 70 L 300 130 L 150 130 L 150 220 L 70 220 Z" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <!-- naive inset - vertices moved along bisector, crossing near concave corner (150,130) -->
+        <path d="M92 92 L 278 92 L 278 108 L 128 108 L 200 175 L 128 198 L 92 198 Z" fill="none" stroke="#dc2626" stroke-width="2"/>
+        <!-- highlight self-crossing -->
+        <circle cx="164" cy="150" r="12" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="3 2"/>
+        <text x="205" y="150" font-size="10.5" fill="#dc2626" font-family="sans-serif">tự cắt</text>
+
+        <!-- RIGHT: correct offset (Method A/B) -->
+        <text x="500" y="40" text-anchor="middle" font-size="12.5" fill="#16a34a" font-family="sans-serif" font-weight="700">Offset đúng (Method A/B)</text>
+        <path d="M385 70 L 615 70 L 615 130 L 465 130 L 465 220 L 385 220 Z" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+        <path d="M407 92 L 593 92 L 593 108 L 443 108 L 443 198 L 407 198 Z" fill="none" stroke="#16a34a" stroke-width="2"/>
+      </svg>
+      <figcaption>Ở góc <b>lõm</b> (mặt trong chữ "L"), inset per-vertex dời các đỉnh vượt qua nhau và tạo vòng tự cắt (trái). Một offset đúng (phải) giữ đường bao hợp lệ và song song đều với biên.</figcaption>
+    </figure>
+
+    <h3>Method B - trường khoảng cách + iso-contour (bền vững topo, không phụ thuộc)</h3>
+    <p>Khi không có thư viện boolean-offset nào - hoặc khi tranh thường xuyên có lỗ, chỗ lõm, hay nhiều vùng rời - hãy offset <em>không cần bất kỳ phép boolean nào</em> bằng cách đọc inset ra từ một trường khoảng cách. Đây là cơ sở chuẩn cho gia công "contour-parallel" / "peel" trong CAM, và hoàn toàn không quan tâm đến topo.</p>
+
+    <pre><code><span class="cm">1. RASTER HOÁ phần trong even-odd (§3, §6) thành mặt nạ trong/ngoài trên lưới</span>
+<span class="cm">   bước  h ≈ spacing / 3.  (h là một phần của khoảng cách dòng, giữ cho đường</span>
+<span class="cm">   iso mượt thay vì răng cưa; đệm lưới thêm vài ô "chắc chắn ngoài" ở viền để</span>
+<span class="cm">   các ô biên phân giải được. Chặn tổng số ô và làm h thô hơn nếu vùng quá lớn</span>
+<span class="cm">   - xem 11 §3.)</span>
+<span class="cm">2. DISTANCE TRANSFORM: với mỗi ô bên trong, tính khoảng cách tới ô bên ngoài</span>
+<span class="cm">   gần nhất. Một CHAMFER transform hai lượt với trọng số (1, √2)·h sai khác Euclid</span>
+<span class="cm">   thật tối đa ~8% (chamfer luôn ước lượng cao hơn, cực đại ở hướng ~22,5°) - nhỏ</span>
+<span class="cm">   so với khoảng cách dòng - và không cần thư</span>
+<span class="cm">   viện. (Một EDT tách được chính xác - Felzenszwalb–Huttenlocher - hoặc EDT thư</span>
+<span class="cm">   viện là bản nâng cấp thả vào khi có sẵn.)</span>
+<span class="cm">3. ISO-CONTOUR: offset vào trong khoảng d chính là đường iso { distance = d }.</span>
+<span class="cm">   Trích các đường iso ở  d = ½·spacing, 1½·spacing, 2½·spacing …  bằng MARCHING</span>
+<span class="cm">   SQUARES (nội suy tuyến tính điểm cắt trên mỗi cạnh ô), NỐI các đoạn thành vòng</span>
+<span class="cm">   kín bằng cách khớp các đầu mút đã lượng tử hoá, và áp một lượt CHAIKIN để bào</span>
+<span class="cm">   đi bậc thang của lưới.</span></code></pre>
+
+    <figure>
+      <svg viewBox="0 0 680 360" width="680" role="img" aria-label="Method B: lưới, distance transform và các đường iso-contour ở d bằng nửa spacing, một rưỡi spacing trên vùng có lỗ">
+        <rect x="12" y="12" width="656" height="336" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+
+        <text x="340" y="38" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif" font-weight="700">Trường khoảng cách trên lưới → các đường iso là offset vào trong</text>
+
+        <!-- grid -->
+        <g stroke="#ece4d5" stroke-width="1">
+          <!-- vertical lines every 30 from 60..600 -->
+          <line x1="60" y1="60" x2="60" y2="320"/><line x1="90" y1="60" x2="90" y2="320"/><line x1="120" y1="60" x2="120" y2="320"/><line x1="150" y1="60" x2="150" y2="320"/><line x1="180" y1="60" x2="180" y2="320"/><line x1="210" y1="60" x2="210" y2="320"/><line x1="240" y1="60" x2="240" y2="320"/><line x1="270" y1="60" x2="270" y2="320"/><line x1="300" y1="60" x2="300" y2="320"/><line x1="330" y1="60" x2="330" y2="320"/><line x1="360" y1="60" x2="360" y2="320"/><line x1="390" y1="60" x2="390" y2="320"/><line x1="420" y1="60" x2="420" y2="320"/><line x1="450" y1="60" x2="450" y2="320"/><line x1="480" y1="60" x2="480" y2="320"/>
+          <line x1="60" y1="60" x2="480" y2="60"/><line x1="60" y1="90" x2="480" y2="90"/><line x1="60" y1="120" x2="480" y2="120"/><line x1="60" y1="150" x2="480" y2="150"/><line x1="60" y1="180" x2="480" y2="180"/><line x1="60" y1="210" x2="480" y2="210"/><line x1="60" y1="240" x2="480" y2="240"/><line x1="60" y1="270" x2="480" y2="270"/><line x1="60" y1="300" x2="480" y2="300"/><line x1="60" y1="320" x2="480" y2="320"/>
+        </g>
+
+        <!-- region boundary (a rounded blob with a hole) -->
+        <path d="M90 100 L 450 100 L 450 280 L 90 280 Z M240 150 L 360 150 L 360 230 L 240 230 Z" fill="#f3ede1" fill-opacity="0.55" stroke="#d9cdb4" stroke-width="2" fill-rule="evenodd"/>
+
+        <!-- iso-contour d = 1/2 spacing (first ring, half a spacing inside) -->
+        <path d="M105 115 L 435 115 L 435 265 L 105 265 Z M225 135 L 375 135 L 375 245 L 225 245 Z" fill="none" stroke="#2563eb" stroke-width="2.2" fill-rule="evenodd"/>
+        <!-- iso-contour d = 1 1/2 spacing -->
+        <path d="M135 145 L 405 145 L 405 235 L 135 235 Z M195 105 L 405 105 L 405 275 L 195 275 Z" fill="none" stroke="#7c3aed" stroke-width="1.8" stroke-dasharray="5 4" fill-rule="evenodd" opacity="0.75"/>
+
+        <!-- distance sample values in some interior cells (mono) -->
+        <g font-family="monospace" font-size="9" fill="#8a94a6">
+          <text x="102" y="132">1</text><text x="132" y="132">2</text><text x="162" y="162">3</text>
+          <text x="102" y="162">2</text><text x="132" y="162">2</text>
+          <text x="102" y="192">2</text>
+        </g>
+
+        <!-- legend labels for iso -->
+        <line x1="500" y1="120" x2="530" y2="120" stroke="#2563eb" stroke-width="2.2"/>
+        <text x="536" y="124" font-size="11" fill="#2563eb" font-family="sans-serif">d = ½·spacing</text>
+        <line x1="500" y1="150" x2="530" y2="150" stroke="#7c3aed" stroke-width="1.8" stroke-dasharray="5 4"/>
+        <text x="536" y="154" font-size="11" fill="#7c3aed" font-family="sans-serif">d = 1½·spacing</text>
+        <rect x="500" y="176" width="24" height="14" fill="#f3ede1" stroke="#d9cdb4"/>
+        <text x="536" y="187" font-size="11" fill="#4a5568" font-family="sans-serif">vùng (có lỗ)</text>
+        <text x="500" y="220" font-size="10" fill="#8a94a6" font-family="monospace">3</text>
+        <text x="516" y="220" font-size="11" fill="#8a94a6" font-family="sans-serif">= khoảng cách tới ngoài</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Vòng đầu tiên ở d = ½·spacing</span>
+        <span><i style="border-color:#7c3aed;border-top-style:dashed"></i> Vòng d = 1½·spacing</span>
+      </div>
+      <figcaption>Phần trong even-odd được raster thành mặt nạ; distance transform gán mỗi ô khoảng cách tới ô ngoài gần nhất. Các đường iso <code>{distance = d}</code> chính là offset vào trong. Chú ý cả biên ngoài lẫn <b>lỗ</b> đều nở vào cùng lúc - chỉ là các đặc trưng của cùng một trường vô hướng.</figcaption>
+    </figure>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Vì sao nó bền vững</span>
+      <p>Lỗ, chỗ lõm, cổ thắt mỏng và nhiều vệt rời đều chỉ là đặc trưng của một trường vô hướng duy nhất - các đường iso tách ra, nhập vào, bo tròn và biến mất một cách đúng đắn <b>không có trường hợp đặc biệt nào và không tự cắt</b>. Vòng đầu tiên ở <code>d = ½·spacing</code> nằm nửa khoảng cách dòng vào trong biên (điểm khởi đầu contour chuẩn, <a href="03-thuat-toan-to.html">03 §3.4</a>). Mỗi mức có thể cho ra nhiều vòng (một cho mỗi nest); trả về tất cả, đã đóng kín (điểm đầu == điểm cuối).</p>
+    </div>
+
+    <p><b>Chi phí:</b> transform là O(số ô); marching squares là một lượt duy nhất, O(số ô + tổng độ dài contour). Cả hai đều bị chặn bởi giới hạn số ô. Xem <a href="11-hieu-nang.html">11 §3</a>.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Đánh đổi Method A vs Method B</span>
+      <p>Offset bằng trường khoảng cách là <em>xấp xỉ</em> ở độ phân giải lưới (góc đọc ra hơi tròn khi <code>h</code> thô), nhưng nó <b>không bao giờ</b> sinh hình học không hợp lệ và không cần phụ thuộc. Method A chính xác nhưng cần một engine offset thật. Mặc định tốt: <b>Method B làm nguyên thuỷ luôn đúng</b>, còn Method A (hoặc offset thư viện) là đường nhanh chính xác cho trường hợp một-vòng đơn giản.</p>
+    </div>
+
+    <p>Từ khoá: <em>distance transform, chamfer distance, marching squares, iso-contour, contour-parallel machining</em>.</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Trường hợp suy biến (cả hai method)</span>
+      <p>Nếu vùng mỏng hơn <code>d</code> ở mọi phía, inset sẽ rỗng - hãy phát hiện điều này và dừng (hoặc giữ lại vòng không-rỗng cuối cùng). Với Method B, điều này đơn giản là "không ô nào có khoảng cách ≥ <code>d</code>".</p>
+    </div>
+
+    <h2>8. Vệ sinh số học</h2>
+    <ul>
+      <li>Dùng bình phương khoảng cách cho các phép so sánh; chỉ lấy <code>sqrt</code> khi cần một độ dài thật.</li>
+      <li>Dịch các đường quét đi <b>nửa bước</b> (<code>y0 = ⌊top/spacing⌋·spacing + spacing/2</code>) để đường không bao giờ rơi đúng vào một đỉnh (sẽ đếm trùng số lần cắt).</li>
+      <li>Nhích điểm thử "ở trong?" đi một chút (≈0,25·spacing) về phía tâm hộp bao của vùng (một trọng tâm xấp xỉ rẻ tiền) khi thử các điểm nằm <em>trên</em> biên (các đường nối chạy dọc theo một cạnh), để một cạnh hợp lệ không bị một hàm <code>contains()</code> nghiêm ngặt (coi biên là ngoài) từ chối.</li>
+      <li><b>Cọ rửa mọi polyline làm phẳng trước khi dùng:</b> loại các toạ độ <b>không hữu hạn</b> (<code>NaN</code> / <code>±inf</code> từ một phép biến đổi hỏng hay một đường cong suy biến) và gộp các <b>điểm trùng liên tiếp</b> (trong một ε nhỏ). Một <code>NaN</code> lọt qua sẽ tới bộ phát mã thành <code>X nan</code>; một đoạn dài bằng 0 gây chia-cho-0 trong mọi tính toán tiếp tuyến/pháp tuyến/offset ở hạ nguồn. Làm việc này một lần, ngay lúc trích xuất, để không giai đoạn sau nào phải phòng thủ với nó.</li>
+      <li>Chặn các cấu trúc lặp (vòng, bậc đường cong, số site, <b>số ô lưới</b>) để đầu vào bệnh lý (spacing quá nhỏ, diện tích quá lớn) luôn kết thúc.</li>
+    </ul>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Tóm lại chương này</span>
+      <p>Bạn đã có bộ nguyên thuỷ hoàn chỉnh: làm phẳng có kiểm soát dung sai, biểu diễn polyline, hai quy tắc tô cùng phép thử điểm-trong-đa-giác, độ lồng để nhận diện lỗ, bao lồi + OBB + các metric hình dạng, xén polyline, và hai cách offset vào trong. <a href="03-thuat-toan-to.html">Chương 3</a> dùng ngay các metric này để tự động chọn bộ tô; <a href="04-duong-vien.html">Chương 4</a> dùng offset để dựng contour và bù kerf.</p>
+    </div>
+
+    <div class="pager">
+      <a href="01-kien-truc.html"><div class="dir">← Trước</div><div class="ttl">1 · Kiến trúc &amp; Pipeline</div></a>
+      <a class="next" href="03-thuat-toan-to.html"><div class="dir">Chương tiếp →</div><div class="ttl">3 · Thuật toán tô &amp; Bộ chọn tự động</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

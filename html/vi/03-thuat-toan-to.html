@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3 · Thuật toán tô &amp; Bộ chọn tự động - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 3 · Trung tâm</span>
+    <h1>Thuật toán tô &amp; Bộ chọn tự động</h1>
+    <p class="lead">Một cái máy chỉ biết vẽ đường thẳng không thể "đổ màu" một vùng như phần mềm đồ hoạ; nó phải <b>phủ kín</b> vùng đó bằng một tập <b>chuỗi</b> đường nét. Chương này đặc tả mọi chiến lược tô, <b>mô hình chi phí</b> dùng để xếp hạng chúng, <b>bộ chọn tự động</b> chọn ra chiến lược tối ưu thời gian từ hình dạng của vùng - cùng cách <b>mật độ</b> tô mã hoá sắc độ. Mọi thứ ở đây trả về <b>chuỗi trong không gian thế giới</b> và hoàn toàn độc lập với ngôn ngữ máy.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Vị trí trong pipeline</span>
+      <p>Đây là giai đoạn 3 - <em>lập kế hoạch chuỗi</em> - của pipeline năm giai đoạn (<a href="00-gioi-thieu.html">Ch. 0</a>, <a href="01-kien-truc.html">Ch. 1</a>). Nó tiêu thụ các số đo hình học (hull, OBB, sáu chỉ số) từ <a href="02-hinh-hoc.html">Ch. 2</a> và sinh ra chuỗi cho giai đoạn <a href="07-sap-xep.html">sắp xếp</a> rồi <a href="08-sinh-ma.html">phát mã</a>. Nó không hề biết máy đích là gì.</p>
+    </div>
+
+    <h2>1. Mô hình chi phí (vì sao một chiến lược thắng chiến lược khác)</h2>
+    <p>Với một diện tích <code>A</code> cố định và khoảng cách dòng <code>s</code> cho trước, <b>quãng đường làm việc (bút hạ) về cơ bản là hằng số</b> cho <em>bất kỳ</em> kiểu tô bằng đường nào:</p>
+
+    <pre><code><span class="cm"># quãng làm việc gần như không phụ thuộc chiến lược</span>
+quãng làm việc ≈ A / s</code></pre>
+
+    <p>Vậy quãng làm việc <b>không</b> phân biệt được các kỹ thuật. Cái khác nhau - và cũng là cái chi phối thời gian máy thực tế - là:</p>
+
+    <ol>
+      <li><b>Số lần nhấc công cụ</b> (lift: nhả → di chuyển → ăn lại). Mỗi lift tốn một khoảng dừng cố định cộng thêm chi phí gia tốc.</li>
+      <li><b>Quãng di chuyển</b> giữa các đoạn rời rạc (các nét bút nâng chẳng tạo ra gì).</li>
+      <li><b>Số lần đảo chiều</b> (giảm tốc → tăng tốc ở mỗi khúc quanh).</li>
+    </ol>
+
+    <figure>
+      <svg viewBox="0 0 720 300" width="720" role="img" aria-label="So sánh Zigzag không nhấc bút với Hatch nhấc bút mỗi dòng">
+        <!-- LEFT: Zigzag, 0 lift -->
+        <text x="150" y="30" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Zigzag · 0 lift</text>
+        <rect x="40" y="48" width="220" height="200" rx="8" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- one continuous boustrophedon stroke -->
+        <path d="M60 70 H240 V100 H60 V130 H240 V160 H60 V190 H240 V220 H60"
+              fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="60" cy="70" r="4.5" fill="#2563eb"/>
+        <circle cx="60" cy="220" r="4.5" fill="#2563eb"/>
+        <text x="150" y="270" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">1 chuỗi liền · 2 điểm bút hạ/nâng</text>
+
+        <!-- RIGHT: Hatch, many lifts -->
+        <text x="570" y="30" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Hatch · 6 lift</text>
+        <rect x="460" y="48" width="220" height="200" rx="8" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- 6 separate horizontal lines (work) -->
+        <g stroke="#2563eb" stroke-width="3" stroke-linecap="round">
+          <path d="M480 70 H660"/>
+          <path d="M480 100 H660"/>
+          <path d="M480 130 H660"/>
+          <path d="M480 160 H660"/>
+          <path d="M480 190 H660"/>
+          <path d="M480 220 H660"/>
+        </g>
+        <!-- travel jumps between lines (dashed) -->
+        <g stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5">
+          <path d="M660 70 L480 100" marker-end="url(#arA)"/>
+          <path d="M660 100 L480 130" marker-end="url(#arA)"/>
+          <path d="M660 130 L480 160" marker-end="url(#arA)"/>
+          <path d="M660 160 L480 190" marker-end="url(#arA)"/>
+          <path d="M660 190 L480 220" marker-end="url(#arA)"/>
+        </g>
+        <text x="570" y="270" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">6 chuỗi rời · 1 lift mỗi dòng</text>
+
+        <!-- middle equals sign for engaged length -->
+        <text x="360" y="150" text-anchor="middle" font-size="22" font-weight="700" fill="#8a94a6" font-family="sans-serif">=</text>
+        <text x="360" y="172" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">cùng quãng</text>
+        <text x="360" y="186" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">làm việc</text>
+
+        <defs>
+          <marker id="arA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Nét di chuyển (lift)</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Vật liệu</span>
+      </div>
+      <figcaption>Ý cốt lõi của cả chương. Cùng một vùng, cùng số dòng, <b>cùng quãng làm việc</b> - nhưng Zigzag nối các dòng thành <em>một nét liền</em> (0 lift), còn Hatch để chúng <em>rời rạc</em> (một lift mỗi dòng). Chính số lift, không phải quãng làm việc, quyết định thời gian máy.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Kết luận</span>
+      <p>Một kiểu tô <b>nối liền</b> vẽ đúng những dòng đó với gần như không nhấc bút luôn thắng một kiểu tô <b>rời rạc</b> về thời gian. Sự thật duy nhất này dẫn dắt toàn bộ bộ chọn tự động (§4): nó chỉ bao giờ chọn trong nhóm các kiểu tô <b>nối liền</b>.</p>
+    </div>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Nhóm</th><th>Số lift</th><th>Tốt cho</th></tr></thead>
+      <tbody>
+        <tr><td><b>Nối liền</b> (Zigzag, Spiral, Contour*)</td><td>~0 đến vài</td><td>tối ưu thời gian; đây là các lựa chọn của Auto</td></tr>
+        <tr><td><b>Rời rạc</b> (Hatch, CrossHatch)</td><td>một lift mỗi dòng</td><td>một kiểu nhìn cụ thể, chỉ dùng thủ công</td></tr>
+        <tr><td><b>Trang trí</b> (Hilbert, Peano, Voronoi)</td><td>thay đổi</td><td>kết cấu/thẩm mỹ, chỉ dùng thủ công</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:14px;color:#4a5568">* Contour vẽ các vòng riêng biệt (một lift mỗi vòng); Spiral nối chúng thành một nét.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Sàn lift là Spiral</span>
+      <p>Hãy hình dung công cụ như một chiếc máy vẽ bút: số lần nhấc bút là chỉ số cần tối thiểu hoá. Zigzag nhấc ~0 lần trên vùng lồi nhưng <em>vỡ vụn</em> (một chuỗi cho mỗi nhịp rời rạc) khi gặp lỗ và chỗ lõm. Contour nhấc một lần mỗi vòng. <b>Spiral, khi có một phép offset bền vững về mặt tô-pô (§3.4) và một bộ nối biết-về-nest (§3.5), nhấc đúng một lần mỗi vùng lồng (nest)</b> - đó là sàn lý thuyết, vì một nest tách biệt thực sự không thể tới được nếu không nhấc bút. Trên một hình vành khăn (donut), đây là khác biệt giữa ~2 lift (Spiral) với hàng chục (Contour, một mỗi vòng) hoặc rất nhiều (Zigzag, một mỗi nhịp mỗi dòng quét). Đây là lý do bộ chọn ở §4 ưa Spiral ở mọi nơi mà bộ máy offset có thể sinh ra vòng.</p>
+    </div>
+
+    <h2>2. Mật độ: ánh xạ sắc độ sang khoảng cách dòng</h2>
+    <p><b>Khoảng cách dòng</b> điều khiển một vùng tô trông tối đến mức nào và mất bao lâu để hoàn thành.</p>
+
+    <pre><code>spacing = shadeFactor(level) × lineWidth</code></pre>
+
+    <ul>
+      <li><code>lineWidth</code> - bề rộng vệt của công cụ (đầu bút, kerf tia). Các dòng gần hơn khoảng này sẽ chồng lên nhau; các dòng cách xa hơn nhiều sẽ để lại khe hở nhìn thấy được.</li>
+      <li><code>shadeFactor(level)</code> - một hệ số nhân theo mỗi <b>mức tô / sắc độ</b>. Càng tối ⇒ hệ số càng nhỏ ⇒ dòng càng khít ⇒ phủ càng nhiều. Một bảng bốn mức tiêu biểu:</li>
+    </ul>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Mức</th><th>Hệ số</th><th>Hiệu ứng</th></tr></thead>
+      <tbody>
+        <tr><td>Đen (100%)</td><td>0.8</td><td>các dòng chồng nhẹ → đặc kín</td></tr>
+        <tr><td>Xám đậm</td><td>1.5</td><td>khe hở nhỏ</td></tr>
+        <tr><td>Xám</td><td>2.5</td><td>khe hở vừa</td></tr>
+        <tr><td>Xám nhạt</td><td>5.0</td><td>thưa</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 220" width="720" role="img" aria-label="Bốn ô vuông cùng chiến lược với khoảng cách dòng tăng dần từ đặc tới thưa">
+        <!-- panel 1: 0.8 solid -->
+        <g>
+          <rect x="20" y="30" width="150" height="150" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+          <clipPath id="c1"><rect x="20" y="30" width="150" height="150" rx="6"/></clipPath>
+          <g clip-path="url(#c1)" stroke="#2563eb" stroke-width="6">
+            <path d="M20 36 H170"/><path d="M20 43 H170"/><path d="M20 50 H170"/><path d="M20 57 H170"/><path d="M20 64 H170"/><path d="M20 71 H170"/><path d="M20 78 H170"/><path d="M20 85 H170"/><path d="M20 92 H170"/><path d="M20 99 H170"/><path d="M20 106 H170"/><path d="M20 113 H170"/><path d="M20 120 H170"/><path d="M20 127 H170"/><path d="M20 134 H170"/><path d="M20 141 H170"/><path d="M20 148 H170"/><path d="M20 155 H170"/><path d="M20 162 H170"/><path d="M20 169 H170"/><path d="M20 176 H170"/>
+          </g>
+          <text x="95" y="200" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">0.8 · Đen</text>
+        </g>
+        <!-- panel 2: 1.5 -->
+        <g>
+          <rect x="190" y="30" width="150" height="150" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+          <clipPath id="c2"><rect x="190" y="30" width="150" height="150" rx="6"/></clipPath>
+          <g clip-path="url(#c2)" stroke="#2563eb" stroke-width="4">
+            <path d="M190 40 H340"/><path d="M190 53 H340"/><path d="M190 66 H340"/><path d="M190 79 H340"/><path d="M190 92 H340"/><path d="M190 105 H340"/><path d="M190 118 H340"/><path d="M190 131 H340"/><path d="M190 144 H340"/><path d="M190 157 H340"/><path d="M190 170 H340"/>
+          </g>
+          <text x="265" y="200" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">1.5 · Xám đậm</text>
+        </g>
+        <!-- panel 3: 2.5 -->
+        <g>
+          <rect x="360" y="30" width="150" height="150" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+          <clipPath id="c3"><rect x="360" y="30" width="150" height="150" rx="6"/></clipPath>
+          <g clip-path="url(#c3)" stroke="#2563eb" stroke-width="3">
+            <path d="M360 46 H510"/><path d="M360 68 H510"/><path d="M360 90 H510"/><path d="M360 112 H510"/><path d="M360 134 H510"/><path d="M360 156 H510"/><path d="M360 178 H510"/>
+          </g>
+          <text x="435" y="200" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">2.5 · Xám</text>
+        </g>
+        <!-- panel 4: 5.0 -->
+        <g>
+          <rect x="530" y="30" width="150" height="150" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+          <clipPath id="c4"><rect x="530" y="30" width="150" height="150" rx="6"/></clipPath>
+          <g clip-path="url(#c4)" stroke="#2563eb" stroke-width="2.5">
+            <path d="M530 58 H680"/><path d="M530 96 H680"/><path d="M530 134 H680"/><path d="M530 172 H680"/>
+          </g>
+          <text x="605" y="200" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">5.0 · Xám nhạt</text>
+        </g>
+      </svg>
+      <figcaption>Cùng <em>một</em> chiến lược tô, chỉ đổi <b>khoảng cách dòng</b>: hệ số 0.8 → 1.5 → 2.5 → 5.0 cho một chuỗi sắc độ từ đen đặc sang xám nhạt. Sắc độ là một hàm của mật độ hình học, không phải màu mực.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Tách bạch trách nhiệm - nhưng không độc lập về số</span>
+      <p><em>Mật độ</em> (spacing) và <em>chiến lược</em> (hình dạng đường) được chọn bởi <b>các cơ chế riêng biệt</b>: người dùng đặt sắc độ qua mật độ; bộ chọn đặt hình dạng đường. Tuy vậy chúng <em>không</em> hoàn toàn độc lập về mặt số học: bộ chọn suy luận về hình dạng <em>tương đối với khoảng cách hiện thời</em> (qua <code>widthInLines</code> và luật vùng-nhỏ, §4), nên một thay đổi lớn về sắc độ - kéo theo spacing - <b>có thể chính đáng đẩy một hình sang chiến lược khác</b>. Một vùng rộng nhiều dòng ở sắc độ tối có thể chỉ rộng một dòng ở sắc độ rất nhạt, nơi một contour đơn <em>thực sự là</em> cách tô đúng. Điều này là cố ý: chiến lược thích ứng với việc thực sự lọt được bao nhiêu lượt vẽ. Điều được đảm bảo là (a) ở một sắc độ <em>cố định</em> chiến lược là tất định, và (b) sắc độ không bao giờ <em>ghi đè</em> một lựa chọn chiến lược tường minh của người dùng - chỉ <code>Auto</code> mới đánh giá lại. Nếu bạn cần đóng băng hình dạng đường qua các sắc độ, hãy chọn một chiến lược tường minh thay vì <code>Auto</code>.</p>
+    </div>
+
+    <p>Với một kiểu tô khắc/đốt dày đặc (laser), spacing lại được điều khiển bởi <b>bước tia/vật liệu</b> (ví dụ ~0.15 mm), cố tình đặt thấp hơn nhiều so với bất kỳ sàn spacing của bút, để vết đốt phủ kín hoàn toàn diện tích.</p>
+
+    <h3>Suy ra mức sắc độ từ màu tô (sắc độ tự động)</h3>
+    <p>Khi sắc độ không được đặt bằng tay, hãy suy nó ra từ <b>màu tô</b> của vùng: màu tối hơn ⇒ dòng dày hơn, sáng hơn ⇒ thưa hơn - nhờ vậy một bản vẽ thang xám khắc ra thành một hình ảnh sắc độ đáng tin mà không cần tinh chỉnh từng vùng.</p>
+
+    <ol>
+      <li>Tính <b>luminance cảm nhận</b> của màu (0 = đen … 1 = trắng):
+      <pre><code><span class="cm"># R,G,B trong khoảng 0..1</span>
+Y = 0.299·R + 0.587·G + 0.114·B</code></pre>
+      Các trọng số có ý nghĩa: một màu đỏ thuần và một màu vàng thuần có cùng độ lớn RGB đọc ra rất khác nhau về độ tối, và luminance này xếp hạng chúng đúng.</li>
+      <li>Ánh xạ luminance sang một <b>hệ số nhân spacing</b> trên spacing gốc (tối nhất):
+      <pre><code>spacing(vùng) = baseSpacing · ( 1 + Y · (Kmax − 1) )</code></pre>
+      với baseSpacing là giá trị cho một kiểu tô <b>hoàn toàn tối</b> (hệ số nhân 1, dày nhất) và <code>Kmax</code> là hệ số nhân thưa nhất (một giá trị tiêu biểu ~5, tức là xám nhạt thành ~5× thưa hơn - khớp với bảng shade-factor phía trên). Đây là một dạng liên tục của bảng đó: đen → 1×, xám giữa → ~3×, nhạt → ~5×.</li>
+    </ol>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Nó sống ở đâu</span>
+      <p>Áp hệ số nhân <b>theo từng vùng, phía trước bộ chọn</b>, nên một vùng sáng hơn sẽ được phân loại lại một cách chính đáng (chỉ số <code>widthInLines</code> của nó co lại - một vùng rộng nhiều dòng khi tối có thể chỉ rộng một dòng khi sáng, §2 phía trên). Giữ nó là một công tắc bật/tắt: một số công việc muốn mật độ đồng nhất bất kể màu. Một màu tô gần-trắng hoặc <code>none</code> nghĩa là "không tô" và không sinh kiểu tô nào (chỉ còn đường viền, nếu có). Phân tích màu bằng mô hình màu của phần mềm chủ; dự phòng bằng một bộ phân tích hex / <code>rgb()</code> / màu-đặt-tên nhỏ để ánh xạ vẫn chạy độc lập được.</p>
+    </div>
+
+    <h2>3. Các chiến lược</h2>
+    <p>Mỗi chiến lược được mô tả theo: <em>ý tưởng → thuật toán → tính nối liền → khi nào dùng</em>.</p>
+
+    <h3>3.1 Hatch (dòng quét song song) - rời rạc</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> tô bằng các đường thẳng song song ở góc θ, khoảng cách s.</li>
+      <li><b>Thuật toán:</b>
+        <ol>
+          <li>Xoay vùng vào một hệ mà các đường hatch nằm ngang (xoay −θ quanh tâm vùng).</li>
+          <li>Với mỗi dòng quét <code>y</code> (bắt đầu từ <code>⌊top/s⌋·s + s/2</code>, bước <code>s</code>), tìm mọi giao điểm với biên, sắp các <code>x</code>, và ghép chúng thành các nhịp bên trong (chẵn-lẻ trên một dòng, <a href="02-hinh-hoc.html">Ch. 2 §6</a>).</li>
+          <li>Phát mỗi nhịp thành một chuỗi 2 điểm; xoay ngược về không gian thế giới.</li>
+        </ol>
+      </li>
+      <li><b>Tính nối liền:</b> một chuỗi mỗi nhịp ⇒ <b>nhiều lift</b>.</li>
+      <li><b>Dùng khi:</b> chỉ thủ công - khi người dùng muốn một "kiểu hatch" đúng nghĩa, một góc cụ thể, hay một quy ước tô bóng kiến trúc. Nhiều bộ góc cho ra cross-hatch/lưới.</li>
+      <li><b>Từ khoá:</b> <em>scanline polygon fill</em>.</li>
+    </ul>
+
+    <h3>3.2 Cross-Hatch - rời rạc</h3>
+    <p>Hai lượt Hatch ở các góc vuông góc nhau (θ và θ+90°), hoặc một bộ góc bất kỳ. Cùng chi phí rời rạc; kiểu nhìn tối hơn/có kết cấu. Chỉ thủ công.</p>
+
+    <figure>
+      <svg viewBox="0 0 620 260" width="620" role="img" aria-label="Hatch một hướng và Cross-Hatch hai hướng vuông góc trên vùng có lỗ">
+        <!-- LEFT Hatch -->
+        <text x="155" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Hatch</text>
+        <path id="blobL" d="M40 60 Q40 44 60 44 H250 Q270 44 270 64 V200 Q270 220 250 220 H60 Q40 220 40 200 Z" fill="#f3ede1" stroke="#d9cdb4"/>
+        <clipPath id="clipL"><use href="#blobL"/></clipPath>
+        <g clip-path="url(#clipL)">
+          <g stroke="#2563eb" stroke-width="2.5">
+            <path d="M40 60 H270"/><path d="M40 78 H270"/><path d="M40 96 H270"/><path d="M40 114 H270"/><path d="M40 132 H270"/><path d="M40 150 H270"/><path d="M40 168 H270"/><path d="M40 186 H270"/><path d="M40 204 H270"/>
+          </g>
+        </g>
+        <!-- small travel hints -->
+        <text x="155" y="245" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">1 hướng · nhiều dòng rời</text>
+
+        <!-- RIGHT Cross-Hatch -->
+        <text x="465" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Cross-Hatch</text>
+        <path id="blobR" d="M350 60 Q350 44 370 44 H560 Q580 44 580 64 V200 Q580 220 560 220 H370 Q350 220 350 200 Z" fill="#f3ede1" stroke="#d9cdb4"/>
+        <clipPath id="clipR"><use href="#blobR"/></clipPath>
+        <g clip-path="url(#clipR)">
+          <g stroke="#2563eb" stroke-width="2.2">
+            <path d="M350 60 H580"/><path d="M350 78 H580"/><path d="M350 96 H580"/><path d="M350 114 H580"/><path d="M350 132 H580"/><path d="M350 150 H580"/><path d="M350 168 H580"/><path d="M350 186 H580"/><path d="M350 204 H580"/>
+          </g>
+          <g stroke="#7c3aed" stroke-width="2.2">
+            <path d="M368 44 V220"/><path d="M386 44 V220"/><path d="M404 44 V220"/><path d="M422 44 V220"/><path d="M440 44 V220"/><path d="M458 44 V220"/><path d="M476 44 V220"/><path d="M494 44 V220"/><path d="M512 44 V220"/><path d="M530 44 V220"/><path d="M548 44 V220"/><path d="M566 44 V220"/>
+          </g>
+        </g>
+        <text x="465" y="245" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">2 hướng vuông góc · tối hơn</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Lượt θ</span>
+        <span><i style="border-color:#7c3aed"></i> Lượt θ+90°</span>
+      </div>
+      <figcaption>Hatch là các đường song song rời rạc; Cross-Hatch chồng thêm một lượt vuông góc. Cả hai đều rời rạc (một lift mỗi dòng) nên chỉ dùng thủ công vì kiểu nhìn, không bao giờ được Auto chọn.</figcaption>
+    </figure>
+
+    <h3>3.3 Zigzag (boustrophedon) - nối liền ★ ứng viên Auto</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> <em>cùng</em> các dòng quét như Hatch, nhưng các nhịp liên tiếp được nối đầu-đuôi thành một nét tới-lui liên tục.</li>
+      <li><b>Thuật toán:</b>
+        <ol>
+          <li>Tính các nhịp bên trong mỗi dòng quét (như Hatch).</li>
+          <li>Duyệt các dòng quét từ trên xuống, <b>xen kẽ</b> thứ tự trái-sang-phải / phải-sang-trái của các nhịp (đây là đảo chiều <em>boustrophedon</em>).</li>
+          <li>Nối nhịp kế vào chuỗi hiện tại <b>chỉ khi</b> đoạn nối giữa cuối nhịp trước và đầu nhịp này ngắn (≤ ~2.5·s) <b>và</b> nằm bên trong vùng. Ngược lại, xả chuỗi ra và bắt đầu chuỗi mới.</li>
+          <li>Chỗ lõm và lỗ tự nhiên tách kiểu tô thành vài chuỗi ở nơi mà một đoạn nối sẽ rời khỏi vùng.</li>
+        </ol>
+      </li>
+      <li><b>Tính nối liền:</b> gần như không lift trên hình lồi/chữ nhật.</li>
+      <li><b>Định hướng:</b> căn các dòng quét theo <b>trục dài</b> của vùng (từ OBB, <a href="02-hinh-hoc.html">Ch. 2 §5</a>) để các nhịp dài nhất và ít đảo chiều nhất.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 640 300" width="640" role="img" aria-label="Zigzag căn theo trục dài của hộp bao định hướng OBB">
+        <!-- OBB (rotated rectangle) -->
+        <g transform="rotate(-20 320 150)">
+          <rect x="120" y="105" width="400" height="90" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5"/>
+          <!-- long axis -->
+          <path d="M120 150 H520" stroke="#d97706" stroke-width="1.5" stroke-dasharray="6 4"/>
+          <!-- boustrophedon stroke along the long axis -->
+          <path d="M135 118 H505 M505 132 H135 M135 146 H505 M505 160 H135 M135 174 H505 M505 188 H135"
+                fill="none" stroke="#2563eb" stroke-width="0" />
+          <path d="M135 118 H505 V132 H135 V146 H505 V160 H135 V174 H505 V188 H135"
+                fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="135" cy="118" r="4.5" fill="#2563eb"/>
+          <circle cx="135" cy="188" r="4.5" fill="#2563eb"/>
+        </g>
+        <!-- labels outside rotation -->
+        <text x="490" y="70" font-size="12" fill="#d97706" font-family="sans-serif" font-weight="700">trục dài (OBB)</text>
+        <path d="M488 74 L430 118" stroke="#d97706" stroke-width="1" fill="none"/>
+        <text x="320" y="285" text-anchor="middle" font-size="12.5" fill="#4a5568" font-family="sans-serif">Các dòng quét chạy dọc trục dài → nhịp dài nhất, ít đảo chiều nhất, một nét liền</text>
+      </svg>
+      <figcaption>Boustrophedon (kiểu "cày ruộng"): dòng quét đảo chiều mỗi lượt, nối thành một nét liền. Căn theo <b>trục dài</b> của hộp bao định hướng (OBB) cho các nhịp dài nhất và số lần đảo chiều ít nhất.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Lưu ý về đoạn nối ở biên</span>
+      <p>Các đoạn nối chạy <em>dọc theo</em> biên, nơi một hàm <code>contains()</code> nghiêm ngặt coi chính biên là bên ngoài. Hãy nhích điểm dò một chút (≈0.25·spacing) về phía <b>tâm hộp bao</b> của vùng (một trọng tâm gần đúng rẻ tiền) trước khi kiểm tra bên-trong, nếu không kiểu tô lồi sẽ vỡ thành nhiều nét. Cú nhích này hợp lệ cho các vùng <b>gần-lồi</b>. Trên vùng lõm hay có lỗ, tâm hộp bao có thể nằm <em>ngoài</em> vật liệu - khi đó cú nhích chỉ làm kiểm tra bên-trong <em>dễ từ chối</em> một đoạn nối hơn, nên nó thiên về việc làm vỡ vụn kiểu tô, <b>không bao giờ thiên về đốt băng qua một khe hở</b>. Vì Auto định tuyến hình lõm/có lỗ tới Spiral (không phải Zigzag, §4), Zigzag bình thường chỉ thấy các vùng gần-lồi; nếu bạn <em>ép</em> Zigzag trên một hình có lỗ, hãy thay cú nhích-tâm-hộp-bao bằng một kiểm tra hướng-vào cục bộ (lấy mẫu vài điểm dọc đoạn nối, hoặc offset theo pháp tuyến hướng vào của đoạn).</p>
+    </div>
+
+    <ul>
+      <li><b>Dùng khi:</b> vùng lồi mở / chữ nhật / dải thẳng mỏng. Đây là kiểu tô tối ưu thời gian đa dụng.</li>
+    </ul>
+
+    <h3>3.4 Contour (offset đồng tâm) - nối liền, vài lift ★ ứng viên Auto</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> tô bằng cách liên tục thu biên vào trong; mỗi lần thu là một vòng kín.</li>
+      <li><b>Thuật toán:</b>
+        <ol>
+          <li>Bắt đầu nửa khoảng cách bên trong biên (để các vòng nằm cân giữa và không đè lại đúng đường viền).</li>
+          <li>Phát các polyline biên hiện tại của vùng thành các vòng kín.</li>
+          <li>Thu vào <code>s</code> (<a href="02-hinh-hoc.html">Ch. 2 §7</a>); lặp lại đến khi rỗng.</li>
+          <li>Chặn bằng một giới hạn số vòng tối đa.</li>
+        </ol>
+      </li>
+      <li><b>Sinh vòng:</b> tập vòng đến thẳng từ nguyên thuỷ offset-hướng-vào (<a href="02-hinh-hoc.html">Ch. 2 §7</a>). Dùng phương pháp <b>trường khoảng cách / iso-contour</b> (Phương pháp B) làm mặc định: nó sinh ra các vòng đồng tâm cho <em>mọi</em> tô-pô - lỗ, chỗ lõm và nhiều nest - trong một lượt (mỗi mức iso cho ra mọi vòng ở độ sâu đó), đúng cái mà một phép inset ngây thơ theo từng đỉnh không làm được. Một thư viện boolean-offset (Phương pháp A) là một lựa chọn chính xác khi có sẵn. Chính sự bền vững này cho phép bộ chọn (§4) thực sự <em>dùng</em> Contour / Spiral trên tác phẩm thật thay vì âm thầm thoái hoá về kiểu nhìn hatch.</li>
+    </ul>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Lưu ý về phủ biên - viền chưa tô mỏng</span>
+      <p>Vì vòng đầu tiên được thu vào nửa khoảng cách, đường được vẽ ngoài cùng nằm ~½·spacing bên trong biên thật, để lại một <b>viền chưa tô mỏng</b> (không đáng kể ở sắc độ dày, thấy rõ ở sắc độ thưa). Khi một hình <em>tô-không-viền</em> phải được phủ kín tới mép, hãy bắt đầu vòng đầu tiên ở <b>½·lineWidth</b> bên trong, để mép ngoài của vòng ngoài cùng chạm đúng vào biên. (Đây là lý do "kiểu tô đã chạm tới biên" <em>không</em> phải một lý do an toàn để bỏ đường viền - xem <a href="04-duong-vien.html">Ch. 4 §2</a>.)</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 300" width="640" role="img" aria-label="Contour các vòng đồng tâm thu vào trong với viền chưa tô mỏng ở ngoài cùng">
+        <!-- true boundary -->
+        <path d="M60 60 H420 V240 H60 Z" fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5" stroke-dasharray="4 4"/>
+        <!-- concentric rings, one lift each -->
+        <g fill="none" stroke="#2563eb" stroke-width="3">
+          <rect x="75" y="75" width="330" height="150" rx="2"/>
+          <rect x="93" y="93" width="294" height="114" rx="2"/>
+          <rect x="111" y="111" width="258" height="78" rx="2"/>
+          <rect x="129" y="129" width="222" height="42" rx="2"/>
+        </g>
+        <!-- entry dots per ring (lift markers) -->
+        <g>
+          <circle cx="75" cy="75" r="4" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+          <circle cx="93" cy="93" r="4" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+          <circle cx="111" cy="111" r="4" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+          <circle cx="129" cy="129" r="4" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+        </g>
+        <!-- thin rim annotation -->
+        <path d="M420 50 L405 75" stroke="#d97706" stroke-width="1" fill="none"/>
+        <text x="470" y="46" text-anchor="middle" font-size="12" fill="#d97706" font-family="sans-serif" font-weight="700">viền chưa tô mỏng</text>
+        <text x="470" y="62" text-anchor="middle" font-size="11" fill="#d97706" font-family="sans-serif">(~½·spacing)</text>
+        <!-- half spacing bracket -->
+        <path d="M60 265 H75" stroke="#4a5568" stroke-width="1"/>
+        <path d="M60 260 V270 M75 260 V270" stroke="#4a5568" stroke-width="1"/>
+        <text x="120" y="286" text-anchor="middle" font-size="11" fill="#4a5568" font-family="sans-serif">½·spacing</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Vòng contour (nét)</span>
+        <span><i style="border-color:#d9cdb4;border-top-style:dashed"></i> Biên thật</span>
+        <span><span class="dot" style="background:#fff;border-color:#94a3b8"></span> Điểm vào mỗi vòng (một lift)</span>
+      </div>
+      <figcaption>Các vòng đồng tâm thu dần vào trong, vòng đầu bắt đầu ½ spacing bên trong biên. Mỗi vòng là một chuỗi kín riêng ⇒ <b>một lift mỗi vòng</b>. Cú thu vào để lại một viền chưa tô mỏng ở mép ngoài.</figcaption>
+    </figure>
+
+    <ul>
+      <li><b>Tính nối liền:</b> một lift mỗi vòng (các vòng tách biệt), nhưng các vòng ôm sát hình nên quãng di chuyển giữa chúng rất nhỏ.</li>
+      <li><b>Dùng khi:</b> hình có <b>lỗ</b>, <b>lõm</b> mạnh, hay <b>mảnh như sợi tóc</b> (rộng vài dòng) nơi bám theo đường viền tái hiện hình dạng tốt hơn hatch thẳng. Cũng là lựa chọn tự nhiên cho chữ/logo nơi "vọng lại đường viền" trông có chủ ý.</li>
+      <li><b>Từ khoá:</b> <em>inward polygon offsetting / contour-parallel machining</em>.</li>
+    </ul>
+
+    <h3>3.5 Spiral (các contour nối liền) - nối liền ★ ứng viên Auto</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> chính là Contour, nhưng nối các vòng đồng tâm thành <b>ít nét liền nhất có thể</b> - một nét mỗi vùng lồng - bằng cách tái định gốc mỗi vòng để bắt đầu gần nơi công cụ đang đứng.</li>
+      <li><b>Thuật toán</b> (một bước-đi-vòng-gần-nhất tham lam - chính logic sắp xếp của <a href="07-sap-xep.html">Ch. 7 §2-3</a> áp lên tập vòng):
+        <ol>
+          <li>Sinh các vòng contour (như §3.4), mỗi vòng là một vòng <em>mở</em> (bỏ điểm trùng đóng vòng). Bắt đầu nét đầu tiên ở vòng ngoài cùng.</li>
+          <li>Từ cuối nét hiện tại, tìm <b>vòng còn lại gần nhất và đỉnh gần nhất trên nó</b>; xoay vòng đó để bắt đầu tại đỉnh ấy rồi nối vào (vẽ trọn vòng quay về điểm vào). Tái định gốc giữ bước đốt giữa hai vòng liên tiếp ngắn chỉ bằng một spacing.</li>
+          <li>Nếu bước nhảy gần nhất đó vượt vài spacing (≈3·s), các vòng còn lại thuộc về một <b>nest tách biệt</b> (bị tách bởi một lỗ hay một chỗ thắt): xả nét hiện tại và bắt đầu nét mới từ vòng còn lại gần nhất.</li>
+          <li>Chặn quét đỉnh-gần-nhất trên các vòng rất lớn (lấy mẫu mỗi k đỉnh) để việc tìm đoạn nối luôn rẻ.</li>
+        </ol>
+      </li>
+      <li><b>Tính nối liền:</b> <b>đúng một lift mỗi vùng lồng</b> - sàn lift (§1).</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 320" width="680" role="img" aria-label="Spiral trên hình donut nối các vòng bằng bước-đi-vòng-gần-nhất, một lift mỗi nest">
+        <!-- donut material -->
+        <path d="M60 160 A100 100 0 1 1 260 160 A100 100 0 1 1 60 160 Z
+                 M120 160 A40 40 0 1 0 200 160 A40 40 0 1 0 120 160 Z"
+              fill="#f3ede1" stroke="#d9cdb4" stroke-width="1.5" fill-rule="evenodd"/>
+        <!-- outer nest: connected spiral (one stroke) -->
+        <g fill="none" stroke="#2563eb" stroke-width="2.6">
+          <circle cx="160" cy="160" r="88"/>
+          <circle cx="160" cy="160" r="70"/>
+          <circle cx="160" cy="160" r="52"/>
+        </g>
+        <!-- short connectors (one spacing) between rings, solid blue -->
+        <g stroke="#2563eb" stroke-width="2.6" fill="none">
+          <path d="M248 160 L230 160"/>
+          <path d="M212 160 L230 160" opacity="0"/>
+          <path d="M230 160 L230 160"/>
+        </g>
+        <!-- redraw connectors as small radial links -->
+        <path d="M248 160 L230 160 M212 160 L230 160" stroke="#2563eb" stroke-width="2.6" fill="none"/>
+        <circle cx="248" cy="160" r="4.5" fill="#fff" stroke="#16a34a" stroke-width="2.4"/>
+        <text x="300" y="150" font-size="11" fill="#16a34a" font-family="sans-serif" font-weight="700">1 lift</text>
+        <text x="300" y="165" font-size="11" fill="#16a34a" font-family="sans-serif">vào nest ngoài</text>
+
+        <!-- far-jump flush (dashed grey) to inner nest? donut has 1 material band; show only rim jump -->
+        <text x="160" y="300" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">Dải vật liệu ngoài: các vòng nối thành MỘT nét</text>
+
+        <!-- RIGHT: nest count / lift budget diagram -->
+        <g font-family="sans-serif">
+          <text x="520" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">Ngân sách lift trên donut</text>
+          <!-- bars -->
+          <rect x="430" y="70" width="30" height="0"/>
+          <!-- Spiral -->
+          <rect x="430" y="200" width="40" height="40" fill="#16a34a"/>
+          <text x="450" y="258" text-anchor="middle" font-size="11" fill="#4a5568">Spiral</text>
+          <text x="450" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#16a34a">~2</text>
+          <!-- Contour -->
+          <rect x="500" y="90" width="40" height="150" fill="#d97706"/>
+          <text x="520" y="258" text-anchor="middle" font-size="11" fill="#4a5568">Contour</text>
+          <text x="520" y="82" text-anchor="middle" font-size="12" font-weight="700" fill="#d97706">hàng chục</text>
+          <!-- Zigzag -->
+          <rect x="570" y="80" width="40" height="160" fill="#dc2626"/>
+          <text x="590" y="258" text-anchor="middle" font-size="11" fill="#4a5568">Zigzag</text>
+          <text x="590" y="72" text-anchor="middle" font-size="12" font-weight="700" fill="#dc2626">rất nhiều</text>
+          <line x1="420" y1="240" x2="625" y2="240" stroke="#8a94a6" stroke-width="1"/>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét Spiral liền (các vòng + đoạn nối)</span>
+        <span><span class="dot" style="background:#fff;border-color:#16a34a"></span> Điểm vào một nest = một lift</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Vật liệu</span>
+      </div>
+      <figcaption>Spiral nối các vòng contour bằng <em>bước-đi-vòng-gần-nhất</em> và tái định gốc, giữ đoạn nối chỉ dài bằng một spacing. Kết quả: <b>một lift mỗi vùng lồng</b>. Trên donut, ngân sách lift rơi từ hàng chục (Contour) hay rất nhiều (Zigzag) xuống chỉ ~2 (Spiral).</figcaption>
+    </figure>
+
+    <ul>
+      <li><b>Dùng khi:</b> là mặc định rộng cho các vùng tô có phần bên trong thực sự - khối tròn/lồi (không đảo chiều, chỉ xoáy vào trong), <b>và</b> hình lõm, hình có lỗ, ruột chữ, giờ đây khi bộ máy offset (<a href="02-hinh-hoc.html">Ch. 2 §7</a>, Phương pháp B) sinh được các vòng hợp lệ cho cả những trường hợp đó. Các đoạn nối giữa các vòng kề nhau nằm trong dải vật liệu, nên thêm quãng đốt không đáng kể và không bao giờ bắc qua một lỗ (cú xả-khi-nhảy-xa đảm bảo điều này).</li>
+      <li><b>Dự phòng:</b> nếu việc sinh vòng thoái hoá (vùng quá mỏng cho bất kỳ vòng nào), lùi về Contour, rồi về kiểu tô dòng quét.</li>
+    </ul>
+
+    <h3>3.6 Hilbert &amp; Peano (đường lấp không gian) - trang trí, chỉ thủ công</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> xén một <b>đường lấp không gian</b> (space-filling curve) vào vùng; đường ghé qua mọi ô của một lưới đúng một lần, cho một kiểu tô một-nét đồng đều, đẳng hướng, với kết cấu dệt đặc trưng.</li>
+      <li><b>Hilbert:</b> sinh bằng ánh xạ thao-tác-bit kinh điển <code>d → (x,y)</code>; chọn bậc đường sao cho kích cỡ ô ≈ spacing (<code>order</code> sao cho <code>side / 2^order ≈ s</code>), rồi xén polyline vào vùng (<a href="02-hinh-hoc.html">Ch. 2 §6</a>).</li>
+      <li><b>Peano:</b> sinh bằng <b>L-system</b> của nó (<code>X → XFYFX-F-YFXFY+F+XFYFX</code>, v.v.; <code>F</code> = bước đi, <code>+/−</code> = quay 90°), duyệt chuỗi ký tự thành polyline, co giãn về hộp bao, xén.</li>
+      <li><b>Tính nối liền:</b> đường là một nét nhưng việc xén làm nó vỡ ở các lỗ; vẫn ít lift. Chặn bậc để giới hạn số điểm.</li>
+      <li><b>Dùng khi:</b> chỉ thẩm mỹ/kết cấu; không bao giờ được auto chọn (một kiểu tô đường nối liền nhanh hơn cho việc phủ thuần).</li>
+      <li><b>Từ khoá:</b> <em>Hilbert curve, Peano curve, L-system, space-filling curve</em>.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 640 280" width="640" role="img" aria-label="Đường Hilbert bậc 3 và đường Peano lấp không gian">
+        <!-- Hilbert order 3 (approx path) -->
+        <text x="150" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Hilbert</text>
+        <rect x="40" y="40" width="220" height="220" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <path fill="none" stroke="#2563eb" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"
+          d="M55 245 L55 217 L83 217 L83 245 L111 245 L111 217 L111 189 L55 189 L55 161 L83 161 L83 133 L55 133 L55 105 L55 77 L83 77 L83 105 L111 105 L111 77 L111 55 L139 55 L139 77 L167 77 L167 105 L139 105 L139 133 L167 133 L167 161 L139 161 L139 189 L195 189 L195 161 L167 161 M195 189 L195 217 L167 217 L167 245 L195 245 L223 245 L223 217 L245 217 L245 245 L245 189 L217 189 L217 161 L245 161 L245 133 L245 105 L217 105 L217 133 L189 133 L189 105 L189 77 L217 77 L217 55 L245 55"/>
+        <text x="150" y="278" text-anchor="middle" font-size="11.5" fill="#4a5568" font-family="sans-serif">một nét, kết cấu dệt đẳng hướng</text>
+
+        <!-- Peano-ish denser grid -->
+        <text x="490" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#1a2230" font-family="sans-serif">Peano</text>
+        <rect x="380" y="40" width="220" height="220" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <path fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"
+          d="M398 252 V58 L420 58 V252 L442 252 V58 L464 58 V252 L486 252 V58 L508 58 V252 L530 252 V58 L552 58 V252 L574 252 V58 M398 252 H574 M398 58 H420 M420 58 H442 M574 58 H552"/>
+        <path fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-linecap="round"
+          d="M398 58 H574"/>
+        <text x="490" y="278" text-anchor="middle" font-size="11.5" fill="#4a5568" font-family="sans-serif">sinh từ L-system, lấp dày hơn</text>
+      </svg>
+      <figcaption>Các đường lấp không gian ghé qua mọi ô lưới đúng một lần, cho kết cấu dệt đặc trưng. Chỉ trang trí - Auto không bao giờ chọn vì một kiểu tô nối liền phủ nhanh hơn.</figcaption>
+    </figure>
+
+    <h3>3.7 Voronoi (dạng tế bào) - trang trí, chỉ thủ công</h3>
+    <ul>
+      <li><b>Ý tưởng:</b> rải các điểm (site) trên một lưới bị nhiễu, dựng ô Voronoi của mỗi site, xén các ô vào vùng, vẽ biên các ô → một hoạ tiết rạn nứt hữu cơ.</li>
+      <li><b>Thuật toán:</b> với mỗi site, bắt đầu bằng một hình vuông lớn và xén nó bằng nửa-mặt-phẳng <b>đường trung trực</b> (perpendicular bisector) so với mọi site khác (Sutherland-Hodgman, <a href="02-hinh-hoc.html">Ch. 2 §6</a>); giao ô kết quả với vùng.</li>
+      <li><b>Tính tất định:</b> suy nhiễu từ một hàm băm của chỉ số lưới để đầu ra tái lập được (không RNG). Chặn số site (xén ô là O(sites²)).</li>
+      <li><b>Dùng khi:</b> chỉ trang trí; không bao giờ được auto chọn.</li>
+      <li><b>Từ khoá:</b> <em>Voronoi diagram, perpendicular bisector, half-plane clipping</em>.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 620 280" width="620" role="img" aria-label="Hoạ tiết tế bào Voronoi xén vào một vùng">
+        <rect x="40" y="30" width="540" height="220" rx="8" fill="#f3ede1" stroke="#d9cdb4"/>
+        <clipPath id="cVor"><rect x="40" y="30" width="540" height="220" rx="8"/></clipPath>
+        <g clip-path="url(#cVor)" fill="none" stroke="#2563eb" stroke-width="2">
+          <!-- Voronoi-like cell edges (hand-laid) -->
+          <path d="M40 90 L150 70 L230 110 L200 180 L120 200 L60 150 Z"/>
+          <path d="M150 70 L260 55 L320 120 L230 110 Z"/>
+          <path d="M260 55 L390 80 L360 150 L320 120 Z"/>
+          <path d="M390 80 L500 60 L560 130 L470 160 L360 150 Z"/>
+          <path d="M200 180 L230 110 L320 120 L360 150 L330 220 L240 235 Z"/>
+          <path d="M330 220 L360 150 L470 160 L500 240 Z"/>
+          <path d="M470 160 L560 130 L580 220 L500 240 Z"/>
+          <path d="M120 200 L200 180 L240 235 L150 250 Z"/>
+        </g>
+        <!-- a few site dots -->
+        <g fill="#7c3aed">
+          <circle cx="140" cy="130" r="3"/><circle cx="240" cy="90" r="3"/><circle cx="330" cy="100" r="3"/>
+          <circle cx="450" cy="115" r="3"/><circle cx="280" cy="175" r="3"/><circle cx="420" cy="200" r="3"/>
+          <circle cx="180" cy="215" r="3"/><circle cx="520" cy="185" r="3"/>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Biên ô (nét)</span>
+        <span><span class="dot" style="background:#7c3aed;border:0;border-radius:50%"></span> Site</span>
+      </div>
+      <figcaption>Mỗi ô là giao của các nửa-mặt-phẳng trung trực giữa một site và mọi site khác, rồi xén vào vùng. Kiểu rạn nứt hữu cơ - chỉ trang trí, không bao giờ auto.</figcaption>
+    </figure>
+
+    <h2>4. Bộ chọn tự động ("Auto")</h2>
+    <p>Cho một vùng, phân loại nó từ các chỉ số của nó (<a href="02-hinh-hoc.html">Ch. 2 §5</a>) và trả về chiến lược <b>nối liền tối ưu thời gian</b>. Auto <b>không bao giờ</b> trả về Hatch/CrossHatch/Hilbert/Peano/Voronoi - những kiểu này đánh đổi thời gian lấy kiểu nhìn và chỉ tới được bằng ghi đè tường minh.</p>
+
+    <p>Đầu vào: <code>area, elongation, rectangularity, convexity, compactness, widthInLines (= meanWidth/spacing), holes</code>, và <code>spacing</code>.</p>
+
+    <h3>Các luật quyết định (khớp đầu tiên thắng)</h3>
+    <p>Bộ chọn được tinh chỉnh để <b>tối ưu lift</b> (§1): với một phép offset bền vững về tô-pô (<a href="02-hinh-hoc.html">Ch. 2 §7</a>, Phương pháp B) và một bộ nối Spiral biết-về-nest (§3.5), Spiral chạm sàn lift trên gần như mọi vùng có phần bên trong thực sự, nên nó là <b>mặc định</b>. Zigzag được giữ ở nơi nó thật sự tốt ngang bằng và tự nhiên hơn (chữ nhật / dải thẳng, nơi boustrophedon dọc trục dài cho nhịp dài nhất và ~0 lift); Contour được giữ cho các sợi mảnh (không có gì để xoáy).</p>
+
+    <pre><code><span class="cm">1. area &lt; 4·spacing²</span>                                  <span class="kw">→ ZIGZAG</span>   <span class="cm"># nhỏ xíu: 1-2 lượt, kiểu tô nào cũng ≈ nhau</span>
+<span class="cm">2. widthInLines &lt; 1.8</span>                                  <span class="kw">→ CONTOUR</span>  <span class="cm"># sợi tóc: không có ruột, ôm đường viền</span>
+<span class="cm">3. widthInLines &lt; 6  AND elongation &gt; 3.5:</span>                        <span class="cm"># dải mảnh dài</span>
+        rectangularity &gt; 0.88 <span class="kw">→ ZIGZAG</span>                           <span class="cm">#   thanh thẳng: hatch dọc trục dài</span>
+        else                  <span class="kw">→ SPIRAL</span>                           <span class="cm">#   mảnh cong/gấp: bám theo + nối</span>
+<span class="cm">4. rectangularity &gt; 0.82 AND convexity &gt; 0.88 AND holes == 0</span>
+                                                       <span class="kw">→ ZIGZAG</span>   <span class="cm"># vuông / chữ nhật: boustrophedon</span>
+<span class="cm">5. otherwise</span>                                           <span class="kw">→ SPIRAL</span>   <span class="cm"># khối, lõm, có lỗ, chữ: ít lift nhất</span></code></pre>
+
+    <figure>
+      <svg viewBox="0 0 720 640" width="720" role="img" aria-label="Cây quyết định của bộ chọn Auto với năm luật, khớp đầu tiên thắng">
+        <defs>
+          <marker id="arT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+        <g font-family="sans-serif">
+          <!-- START -->
+          <rect x="270" y="16" width="180" height="40" rx="20" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="360" y="41" text-anchor="middle" font-size="13" font-weight="700" fill="#d6e2ff">Vùng + spacing</text>
+          <path d="M360 56 V78" stroke="#94a3b8" stroke-width="2" marker-end="url(#arT)"/>
+
+          <!-- RULE 1 -->
+          <rect x="235" y="80" width="250" height="52" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="360" y="102" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">Luật 1 · area &lt; 4·spacing² ?</text>
+          <text x="360" y="120" text-anchor="middle" font-size="11" fill="#4a5568">vùng nhỏ xíu, 1-2 lượt</text>
+          <!-- yes to zigzag -->
+          <path d="M485 106 H590" stroke="#16a34a" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="530" y="98" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">có</text>
+          <rect x="592" y="88" width="110" height="36" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="647" y="111" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">ZIGZAG</text>
+          <path d="M360 132 V152" stroke="#94a3b8" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="374" y="147" font-size="11" fill="#8a94a6">không</text>
+
+          <!-- RULE 2 -->
+          <rect x="235" y="154" width="250" height="52" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="360" y="176" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">Luật 2 · widthInLines &lt; 1.8 ?</text>
+          <text x="360" y="194" text-anchor="middle" font-size="11" fill="#4a5568">sợi tóc, không có ruột</text>
+          <path d="M485 180 H590" stroke="#16a34a" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="530" y="172" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">có</text>
+          <rect x="592" y="162" width="110" height="36" rx="8" fill="#fff8e6" stroke="#f2d88a"/>
+          <text x="647" y="185" text-anchor="middle" font-size="13" font-weight="700" fill="#b7791f">CONTOUR</text>
+          <path d="M360 206 V226" stroke="#94a3b8" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="374" y="221" font-size="11" fill="#8a94a6">không</text>
+
+          <!-- RULE 3 -->
+          <rect x="215" y="228" width="290" height="52" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="360" y="250" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">Luật 3 · widthInLines &lt; 6 AND elong &gt; 3.5 ?</text>
+          <text x="360" y="268" text-anchor="middle" font-size="11" fill="#4a5568">dải mảnh dài</text>
+          <path d="M360 280 V300" stroke="#94a3b8" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="374" y="295" font-size="11" fill="#8a94a6">không</text>
+
+          <!-- rule 3 YES branch -> sub-decision -->
+          <path d="M505 254 H560 V318" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#arT)"/>
+          <text x="535" y="246" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">có</text>
+          <rect x="470" y="320" width="180" height="48" rx="8" fill="#f7f9fc" stroke="#dfe5ee"/>
+          <text x="560" y="341" text-anchor="middle" font-size="12" font-weight="700" fill="#4a5568">rectangularity &gt; 0.88 ?</text>
+          <text x="560" y="357" text-anchor="middle" font-size="11" fill="#8a94a6">thẳng hay cong?</text>
+          <!-- sub yes -> zigzag -->
+          <path d="M650 336 H690 V300" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#arT)"/>
+          <text x="668" y="326" font-size="10" font-weight="700" fill="#16a34a">có</text>
+          <rect x="640" y="262" width="72" height="34" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="676" y="284" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1e49b8">ZIGZAG</text>
+          <!-- sub no -> spiral -->
+          <path d="M560 368 V392" stroke="#dc2626" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="574" y="386" font-size="10" fill="#dc2626">không</text>
+          <rect x="522" y="394" width="76" height="34" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+          <text x="560" y="416" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16a34a">SPIRAL</text>
+
+          <!-- RULE 4 -->
+          <rect x="185" y="302" width="290" height="60" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="330" y="324" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6b3fb8">Luật 4 · rect &gt; 0.82 AND convex &gt; 0.88</text>
+          <text x="330" y="340" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6b3fb8">AND holes == 0 ?</text>
+          <text x="330" y="356" text-anchor="middle" font-size="11" fill="#4a5568">chữ nhật thực sự</text>
+          <!-- yes -> zigzag -->
+          <path d="M185 332 H120 V300" stroke="#16a34a" stroke-width="2" fill="none" marker-end="url(#arT)"/>
+          <text x="150" y="322" text-anchor="middle" font-size="11" font-weight="700" fill="#16a34a">có</text>
+          <rect x="70" y="262" width="100" height="36" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="120" y="285" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1e49b8">ZIGZAG</text>
+          <path d="M330 362 V450" stroke="#94a3b8" stroke-width="2" marker-end="url(#arT)"/>
+          <text x="344" y="410" font-size="11" fill="#8a94a6">không</text>
+
+          <!-- RULE 5 default -->
+          <rect x="210" y="452" width="240" height="56" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+          <text x="330" y="476" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Luật 5 · SPIRAL (mặc định)</text>
+          <text x="330" y="494" text-anchor="middle" font-size="11" fill="#4a5568">khối, lõm, có lỗ, chữ → ít lift nhất</text>
+
+          <!-- footer note -->
+          <text x="360" y="545" text-anchor="middle" font-size="12" fill="#4a5568" font-weight="700">Mọi luật đều tới được và không luật nào bị che.</text>
+          <text x="360" y="565" text-anchor="middle" font-size="11.5" fill="#8a94a6">Chữ nhật bị ghim vào Zigzag ở luật 4; mọi thứ khác có ruột thực sự tới Spiral ở luật 5.</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><span class="dot" style="background:#f4f0fb;border-color:#d8c9f0"></span> Luật kiểm tra</span>
+        <span><span class="dot" style="background:#eaf1ff;border-color:#b9d4ff"></span> Zigzag</span>
+        <span><span class="dot" style="background:#fff8e6;border-color:#f2d88a"></span> Contour</span>
+        <span><span class="dot" style="background:#eefaf0;border-color:#b7e3c2"></span> Spiral</span>
+      </div>
+      <figcaption>Cây quyết định của bộ chọn Auto: năm luật, <b>khớp đầu tiên thắng</b>. Vùng nhỏ xíu → Zigzag; sợi tóc → Contour; dải mảnh dài rẽ theo độ thẳng; chữ nhật thực sự → Zigzag; còn lại → Spiral (mặc định, sàn lift).</figcaption>
+    </figure>
+
+    <h3>Lý do từng luật</h3>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Luật</th><th>Vì sao</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Dưới vài lượt vẽ thì chiến lược không còn ý nghĩa; Zigzag là lựa chọn đúng đơn giản nhất.</td></tr>
+        <tr><td>2</td><td>Một vùng chỉ rộng ~1 dòng thì không có ruột để tô; một contour đơn <em>chính là</em> kiểu tô, và không có gì cho spiral xoáy qua.</td></tr>
+        <tr><td>3</td><td>Một hình dài mảnh: một <b>thanh thẳng</b> (rectangularity cao) hatch dọc chiều dài với các nhịp dài nhất có thể → Zigzag; một <b>mảnh cong/gấp</b> được bám theo tốt hơn - và nối với ít lift hơn - bằng một Spiral của offset của nó.</td></tr>
+        <tr><td>4</td><td>Một hình gần-chữ-nhật tô nhanh nhất bằng boustrophedon dọc trục dài: ~0 lift và ít đảo chiều nhất (2 mỗi dòng quét). Một <em>spiral</em> vuông sẽ quay 4× mỗi vòng mà chẳng lợi gì, nên hình vuông/chữ nhật bị ghim vào Zigzag. Điều kiện <code>convexity &gt; 0.88 AND holes == 0</code> giữ các hình thật sự chữ nhật ở đây và để các chữ-nhật-bị-khoét lõm/có lỗ rơi xuống Spiral.</td></tr>
+        <tr><td>5</td><td><b>Mặc định tối ưu lift.</b> Khối tròn (spiral vào trong không đảo chiều), hình lõm, hình có lỗ và ruột chữ đều nối thành một nét mỗi nest (§3.5) - ít lift hơn Contour (một mỗi vòng) và ít hơn nhiều so với Zigzag vỡ vụn qua chỗ lõm/lỗ. Cần bộ máy offset bền vững; nếu không sinh được vòng thì kiểu tô lùi về dự phòng (Contour → dòng quét, §6).</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Ví dụ đã tính (các luật đều tới được và định tuyến đúng như tuyên bố)</h3>
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Hình</th><th>convexity</th><th>rectangularity</th><th>holes</th><th>Luật khớp đầu tiên</th><th>→</th></tr></thead>
+      <tbody>
+        <tr><td><b>Hình vuông</b> tô đặc</td><td>1.0</td><td>~1.0</td><td>0</td><td>luật 3 bỏ qua → <b>luật 4</b> (rect&gt;0.82, convex&gt;0.88)</td><td>Zigzag (dọc trục dài)</td></tr>
+        <tr><td><b>Đĩa tròn</b> tô đặc</td><td>1.0</td><td>~0.79</td><td>0</td><td>luật 1-4 bỏ qua (rect&lt;0.82) → <b>luật 5</b></td><td>Spiral (xoáy vào, ~1 lift)</td></tr>
+        <tr><td>Chữ <b>"L"</b></td><td>~0.6</td><td>~0.55</td><td>0</td><td>luật 4 hỏng (convex&lt;0.88) → <b>luật 5</b></td><td>Spiral (một nét, ~1 lift)</td></tr>
+        <tr><td><b>Donut</b> (vành khăn)</td><td>-</td><td>-</td><td>1</td><td>luật 4 hỏng (holes&gt;0) → <b>luật 5</b></td><td>Spiral (một nét mỗi dải, ~2 lift)</td></tr>
+        <tr><td>Chữ <b>"o"</b></td><td>-</td><td>-</td><td>1</td><td>luật 4 hỏng (holes&gt;0) → <b>luật 5</b></td><td>Spiral (~1-2 lift)</td></tr>
+        <tr><td><b>Thanh thẳng mảnh</b></td><td>~1.0</td><td>~0.95</td><td>0</td><td><b>luật 3</b> (elong&gt;3.5, rect&gt;0.88)</td><td>Zigzag (hatch dọc chiều dài)</td></tr>
+        <tr><td><b>Chấm nhỏ</b> (area &lt; 4s²)</td><td>-</td><td>-</td><td>-</td><td><b>luật 1</b></td><td>Zigzag (1-2 lượt)</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Mọi luật đều tới được và không luật nào bị che: chữ nhật bị ghim vào Zigzag bởi luật 4, mọi thứ khác có ruột thực sự tới Spiral ở luật 5.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Design evolution - vì sao bộ luật này thay bộ trước</span>
+      <p>Một phiên bản trước của bộ chọn định tuyến các hình <b>có lỗ / lõm mạnh</b> tới <em>Contour</em> và dành <em>Spiral</em> chỉ cho các khối tròn lồi. Điều đó đúng <b>cho một Spiral chỉ-lồi</b> - một Spiral dựng trên phép inset ngây thơ theo từng đỉnh vốn tự cắt trên chỗ lõm và không nối được qua các lỗ. Một khi bộ máy offset bền vững về tô-pô (Phương pháp B) và bộ nối Spiral biết-về-nest (§3.5), hạn chế đó biến mất: Spiral sinh ra các vòng hợp lệ và nối chúng với <b>một lift mỗi nest</b> trên <em>mọi</em> tô-pô, thắng hẳn Contour trên chính chỉ số lift mà mô hình chi phí (§1) được xây để tối thiểu hoá. Bài học đáng ghi lại: <b>các luật của một bộ chọn tự động mã hoá năng lực hiện thời của các chiến lược đứng sau chúng</b> - làm mạnh một chiến lược (ở đây, làm offset bền vững) thì bộ chọn phải được tinh chỉnh lại để khai thác nó, nếu không nó bỏ phí phần thắng. Hiệu quả đo được: một kiểu tô donut rơi từ hàng chục lift (Contour) xuống ~2 (Spiral).</p>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Ghi chú thiết kế</span>
+      <p>Các ngưỡng có thể diễn giải được, có thứ tự, và độc lập với mọi ngôn ngữ máy. Hãy tinh chỉnh lại bằng cách đổi <em>lý do</em> (ví dụ một máy có lift rất rẻ có thể nới lỏng sự ưu ái đường nối liền), chứ không phải bằng thử-và-sai.</p>
+    </div>
+
+    <h2>5. Ghi đè "Architecture fill" (sắc độ bằng hatch)</h2>
+    <p>Một chế độ sản phẩm hữu ích: ép <b>mọi mức không phải tối nhất</b> về một <b>Hatch</b> thuần theo một hướng cố định do người dùng đặt, trong khi <b>mức tối nhất</b> giữ chiến lược đã chọn (hoặc Auto). Vì spacing đã mã hoá sắc độ (§2), các mức nhạt hơn vẫn đọc ra đúng độ tối - nhưng dưới dạng các đường song song nhất quán, đó là cách quy ước để chỉ vật liệu/sắc độ trong bản vẽ kỹ thuật/kiến trúc. Đây là một quyết định ở cấp điều phối, phủ <em>lên trên</em> bộ chọn: nó tráo chiến lược và bộ góc, không gì khác.</p>
+
+    <h2>6. Hợp đồng <code>fill()</code> &amp; dự phòng</h2>
+    <pre><code><span class="fn">fill</span>(region, strategy, params) -> list&lt;chain&gt;:
+    region.fillRule = EVEN_ODD
+    spacing = <span class="fn">max</span>(floor, params.spacing)          <span class="cm"># không bao giờ 0 hay âm</span>
+    metrics = <span class="fn">computeMetrics</span>(<span class="fn">flatten</span>(region), spacing)
+    <span class="kw">if</span> strategy == AUTO: strategy = <span class="fn">chooseAuto</span>(metrics, spacing)
+
+    chains = <span class="fn">dispatch</span>(strategy)                    <span class="cm"># §3</span>
+    <span class="kw">if</span> strategy == SPIRAL <span class="kw">and</span> chains empty: chains = <span class="fn">contour</span>(region, spacing)
+
+    <span class="cm"># LƯỚI AN TOÀN: không bao giờ để một diện tích thật sự trống</span>
+    <span class="kw">if</span> chains empty <span class="kw">and</span> metrics.area &gt; spacing²:
+        chains = <span class="fn">hatch</span>(region, metrics.longAxis, spacing)
+    <span class="kw">return</span> chains</code></pre>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Hai ngưỡng diện tích khác nhau - đừng gộp</span>
+      <p>Lưu ý hai ngưỡng diện tích được đặt <b>cố ý khác nhau</b>: <code>4·spacing²</code> là ngưỡng "quá nhỏ, không đáng chọn" trong bộ chọn (luật 1), còn <code>spacing²</code> là phép thử "có còn diện tích thật nào để cứu không?" cho lưới-an-toàn dự phòng. <b>Đừng hợp nhất chúng.</b></p>
+    </div>
+
+    <h4>Bất biến</h4>
+    <ul>
+      <li>Luôn chạy trên phần bên trong theo <b>chẵn-lẻ</b> (even-odd) để các lỗ được tôn trọng.</li>
+      <li>Luôn kẹp spacing về một sàn dương.</li>
+      <li>Luôn sinh ra đầu ra cho một diện tích không tầm thường (dự phòng hatch).</li>
+      <li>Các vòng kín được trả về <b>đóng</b> (điểm đầu == điểm cuối) để giai đoạn sắp xếp có thể tái định gốc chúng (<a href="07-sap-xep.html">Ch. 7</a>).</li>
+    </ul>
+
+    <h2>7. Danh sách kiểm tra khi cài đặt (cho một AI sinh một bộ máy tô)</h2>
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Checklist</span>
+      <ul>
+        <li>Làm phẳng đường cong với một dung sai đồng nhất trong không gian thế giới (<a href="02-hinh-hoc.html">Ch. 2 §1</a>).</li>
+        <li>Chạy bộ máy trên phần bên trong theo <b>chẵn-lẻ</b>; tính diện tích ròng &amp; số lỗ qua độ sâu chẵn-lẻ (<a href="02-hinh-hoc.html">Ch. 2 §4</a>). (Các chồng lấp phải đọc ra đặc được xử lý <em>phía trước</em> - non-zero/hợp per <a href="02-hinh-hoc.html">Ch. 2 §3</a> - trước khi vùng đến bộ máy.)</li>
+        <li>Tính hull → OBB diện-tích-nhỏ-nhất → sáu chỉ số (<a href="02-hinh-hoc.html">Ch. 2 §5</a>).</li>
+        <li>Cài đặt trích xuất nhịp dòng quét một lần; tái dùng cho cả Hatch và Zigzag.</li>
+        <li>Cài đặt offset hướng vào một lần (<a href="02-hinh-hoc.html">Ch. 2 §7</a>); tái dùng cho Contour và Spiral. Ưu tiên phương pháp <b>trường khoảng cách / iso-contour</b> để lỗ / lõm / nhiều nest đều chạy; giữ một đường-nhanh boolean-offset nếu có. Đừng bao giờ xuất xưởng một phép inset trần theo từng đỉnh làm phép offset duy nhất.</li>
+        <li>Nối các vòng Spiral bằng một <b>bước-đi-vòng-gần-nhất biết-về-nest</b> (§3.5): một nét mỗi nest, xả khi nhảy xa - đây là nơi phần tiết kiệm lift nằm.</li>
+        <li>Cài đặt bộ chọn tự động như danh sách luật có thứ tự (§4), và <b>tinh chỉnh lại mỗi khi năng lực một chiến lược thay đổi</b> (ví dụ một khi offset đã bền vững, ưu ái Spiral rộng rãi). Luật cũ làm phí một chiến lược đã được làm mạnh.</li>
+        <li>Giữ mật độ và chiến lược là các <em>đầu vào riêng</em>: mật độ nuôi các chỉ số tương-đối-spacing của bộ chọn, nhưng chiều ngược lại không bao giờ đúng - một chiến lược không được nướng sẵn spacing của riêng nó (§2). Tuỳ chọn suy mức sắc độ từ <b>luminance màu tô</b> (§2) - tối hơn ⇒ dày hơn - như một công tắc.</li>
+        <li>Cung cấp dự phòng hatch và các giới hạn chặn theo từng chiến lược.</li>
+        <li>Trả về chuỗi trong không gian thế giới; để việc sắp xếp + phát mã lo phần còn lại.</li>
+      </ul>
+    </div>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Tóm lại</span>
+      <p>Một máy vẽ đường phủ vùng bằng <em>chuỗi</em>, không phải bằng cách đổ màu. Mô hình chi phí (§1) nói rằng số <b>lift</b> chi phối thời gian, nên bộ chọn chỉ chọn trong các kiểu tô <b>nối liền</b> và ưa <b>Spiral</b> (sàn lift) ở mọi nơi offset sinh được vòng. Mật độ (§2) mã hoá sắc độ tách biệt với hình dạng đường. Phần còn lại - <a href="04-duong-vien.html">viền</a>, <a href="05-chu-net-don.html">chữ</a>, <a href="06-hoa-van.html">hoa văn</a> - đều xây trên đúng nền chuỗi này, rồi được <a href="07-sap-xep.html">sắp xếp</a> và <a href="08-sinh-ma.html">phát mã</a> đồng nhất.</p>
+    </div>
+
+    <div class="pager">
+      <a href="02-hinh-hoc.html"><div class="dir">← Trước</div><div class="ttl">2 · Nền tảng hình học</div></a>
+      <a class="next" href="04-duong-vien.html"><div class="dir">Chương tiếp →</div><div class="ttl">4 · Đường viền &amp; Contour</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

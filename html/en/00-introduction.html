@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0 · The core idea: the Chain model - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 0 · Foundations</span>
+    <h1>The core idea: the Chain model</h1>
+    <p class="lead">Before we discuss curves, fills, or text, we need one simple truth as a foundation: everything a point-to-point machine can do reduces to a single data structure - a <b>chain of points</b>. Grasp this, and the whole system becomes clear.</p>
+
+    <h2>1. Every machine speaks the same "abstract language"</h2>
+    <p>A pen plotter, a laser, a vinyl/knife cutter, a CNC router - however different their physics - all accept the same basic instruction set:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Move while the tool is DISENGAGED</h4><p>Pen up / laser off / blade up. This is a <b>travel (rapid)</b> move: it produces nothing on the material.</p></div>
+      <div class="card"><h4>Move while the tool is ENGAGED</h4><p>Pen down / laser on / blade down. This is a <b>working</b> move: it produces a mark, a cut, or a burn.</p></div>
+      <div class="card"><h4>Modulate the tool (optional)</h4><p>During a working move, the intensity can vary: laser power, spindle RPM, blade force.</p></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 220" width="640" role="img" aria-label="Distinguishing travel moves from working moves">
+        <rect x="20" y="20" width="600" height="180" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+        <text x="40" y="46" font-size="13" fill="#8a94a6" font-family="sans-serif">Material</text>
+
+        <!-- working strokes (solid blue) -->
+        <path d="M80 150 L 150 70" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M150 70 L 230 150" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <!-- travel (dashed grey) -->
+        <path d="M230 150 L 360 60" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+        <!-- working again -->
+        <path d="M360 60 L 420 150 L 500 60 L 560 150" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+        <!-- pen up/down markers -->
+        <circle cx="230" cy="150" r="5" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+        <text x="230" y="178" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="sans-serif">up</text>
+        <circle cx="360" cy="60" r="5" fill="#fff" stroke="#2563eb" stroke-width="2"/>
+        <text x="360" y="46" text-anchor="middle" font-size="11" fill="#2563eb" font-family="sans-serif">down</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Working move (pen down - makes a mark)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Travel move (pen up - no mark)</span>
+      </div>
+      <figcaption>All machine output, however complex, is just an interleaving of these two kinds of motion.</figcaption>
+    </figure>
+
+    <h2>2. Defining the "Chain"</h2>
+    <p>Because there are only two kinds of motion, every drawing reduces to a single data structure:</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Chain</span>
+      <p>A <b>chain</b> = an <em>ordered</em> list of 2-D points (a polyline) that the tool traces in <em>one continuous engaged pass</em>. Between chains, the tool disengages and travels.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 660 240" width="660" role="img" aria-label="Three chains and the travel moves between them">
+        <!-- chain A -->
+        <polyline points="60,180 90,110 130,80 175,95 200,150" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="60" cy="180" r="4" fill="#2563eb"/><circle cx="200" cy="150" r="4" fill="#2563eb"/>
+        <text x="120" y="215" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chain A</text>
+
+        <!-- travel A→B -->
+        <path d="M200 150 L 320 90" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#ar0)"/>
+
+        <!-- chain B (closed loop) -->
+        <path d="M320 90 C 300 40, 400 40, 400 90 C 400 140, 300 140, 320 90 Z" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round"/>
+        <circle cx="320" cy="90" r="4" fill="#2563eb"/>
+        <text x="360" y="165" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chain B (closed loop)</text>
+
+        <!-- travel B→C -->
+        <path d="M320 90 L 470 170" stroke="#94a3b8" stroke-width="1.8" stroke-dasharray="5 5" marker-end="url(#ar0)"/>
+
+        <!-- chain C -->
+        <polyline points="470,170 520,110 560,120 600,70" fill="none" stroke="#2563eb" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="470" cy="170" r="4" fill="#2563eb"/><circle cx="600" cy="70" r="4" fill="#2563eb"/>
+        <text x="535" y="205" text-anchor="middle" font-size="12" fill="#2563eb" font-family="sans-serif" font-weight="700">Chain C</text>
+
+        <defs>
+          <marker id="ar0" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Three chains joined by <b>travel moves</b> (dashed). Curves, fills, text and images are simply <em>different sources of chains</em>.</figcaption>
+    </figure>
+
+    <p>The entire job fits in one sentence: <em>produce a set of chains that reproduce the artwork, order them to minimise travel, then serialise them into the target machine language.</em> This is the single most important abstraction in the whole system.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">The core separation principle</span>
+      <p>Keep the <b>geometry</b> (chain production) completely independent of the <b>machine language</b> (chain serialisation). Only the final emission stage - thin and unique - knows about a specific machine. If a function computing a hatch pattern mentions <code>G1</code> or <code>PD</code>, the design is wrong.</p>
+    </div>
+
+    <h2>3. The five-stage pipeline</h2>
+    <p>Turning a drawing into code passes through five distinct stages. Each has a single responsibility and communicates with the next through a clear contract.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 210" width="720" role="img" aria-label="The five-stage pipeline">
+        <g font-family="sans-serif">
+          <g>
+            <rect x="14"  y="40" width="122" height="70" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+            <text x="75" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">1 · Resolve</text>
+            <text x="75" y="84" text-anchor="middle" font-size="11" fill="#4a5568">geometry</text>
+            <text x="75" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">bake transforms</text>
+          </g>
+          <g>
+            <rect x="152" y="40" width="122" height="70" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+            <text x="213" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">2 · Extract</text>
+            <text x="213" y="84" text-anchor="middle" font-size="11" fill="#4a5568">primitives</text>
+            <text x="213" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">flatten curves</text>
+          </g>
+          <g>
+            <rect x="290" y="40" width="122" height="70" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+            <text x="351" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">3 · Plan</text>
+            <text x="351" y="84" text-anchor="middle" font-size="11" fill="#4a5568">fill/text/pattern</text>
+            <text x="351" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">produce chains</text>
+          </g>
+          <g>
+            <rect x="428" y="40" width="122" height="70" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+            <text x="489" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">4 · Order</text>
+            <text x="489" y="84" text-anchor="middle" font-size="11" fill="#4a5568">chains</text>
+            <text x="489" y="99" text-anchor="middle" font-size="10" fill="#8a94a6">minimise travel</text>
+          </g>
+          <g>
+            <rect x="566" y="40" width="140" height="70" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+            <text x="636" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#9be59b">5 · Emit</text>
+            <text x="636" y="84" text-anchor="middle" font-size="11" fill="#d6e2ff">machine language</text>
+            <text x="636" y="99" text-anchor="middle" font-size="10" fill="#6b86b8">GRBL/HPGL…</text>
+          </g>
+
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M136 75 h14" marker-end="url(#arp)"/>
+            <path d="M274 75 h14" marker-end="url(#arp)"/>
+            <path d="M412 75 h14" marker-end="url(#arp)"/>
+            <path d="M550 75 h14" marker-end="url(#arp)"/>
+          </g>
+
+          <text x="150" y="140" font-size="11" fill="#2563eb" font-weight="700">◀ GEOMETRY (machine-agnostic) ▶</text>
+          <text x="590" y="140" font-size="11" fill="#16a34a" font-weight="700">◀ MACHINE LANGUAGE ▶</text>
+          <line x1="14" y1="152" x2="412" y2="152" stroke="#b9d4ff" stroke-width="3"/>
+          <line x1="428" y1="152" x2="706" y2="152" stroke="#b7e3c2" stroke-width="3"/>
+        </g>
+        <defs>
+          <marker id="arp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>The first four stages are <b>pure geometry</b>, entirely unaware of the machine. Only stage 5 - thin - translates chains into a concrete language. Swapping GRBL for HPGL changes only this stage.</figcaption>
+    </figure>
+
+    <div class="kv">
+      <div><dt>1 · Resolve geometry</dt><dd>Bake every transform (translate/rotate/scale/shear) into world space; choose the fill rule; identify holes. → <a href="02-geometry.html">Ch. 2</a></dd></div>
+      <div><dt>2 · Extract primitives</dt><dd>Flatten Bézier/arc curves to polylines at a controlled tolerance; separate the <em>outline</em> from the <em>interior area</em>. → <a href="02-geometry.html">Ch. 2</a>, <a href="04-outline-contour.html">Ch. 4</a></dd></div>
+      <div><dt>3 · Plan chains</dt><dd>Per source: solid area → fill engine; pattern → tile &amp; clip; text → skeleton; image → scanline modulation. → <a href="03-fill-algorithms.html">Ch. 3</a>, <a href="05-centerline-text.html">5</a>, <a href="06-pattern-shade.html">6</a>, <a href="09-raster-engraving.html">9</a></dd></div>
+      <div><dt>4 · Order chains</dt><dd>Minimise travel with nearest-neighbour, choose entry points, re-root closed loops. → <a href="07-toolpath-ordering.html">Ch. 7</a></dd></div>
+      <div><dt>5 · Emit dialect</dt><dd>Modal tool state, coordinate formatting, preamble/postamble, coordinate-system transforms. → <a href="08-machine-code.html">Ch. 8</a></dd></div>
+    </div>
+
+    <h2>4. Glossary</h2>
+    <p>These terms recur throughout the book. You need not memorise them now - return here when you hit an unfamiliar word.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><b>Chain / polyline</b></td><td>Ordered point list traced in one engaged pass.</td></tr>
+        <tr><td><b>Working move</b></td><td>Motion with the tool engaged (marks the material).</td></tr>
+        <tr><td><b>Travel / rapid</b></td><td>Motion with the tool disengaged (no mark).</td></tr>
+        <tr><td><b>Pen-up / pen-down</b></td><td>Generic names for disengage / engage, whatever the tool.</td></tr>
+        <tr><td><b>Flattening</b></td><td>Approximating curves (Bézier/arc) by short line segments.</td></tr>
+        <tr><td><b>Tolerance</b></td><td>Max allowed deviation between the true curve and the flattened polyline.</td></tr>
+        <tr><td><b>Fill rule</b></td><td>How nested subpaths decide inside/outside (even-odd vs non-zero winding).</td></tr>
+        <tr><td><b>Hole / counter</b></td><td>An interior region that must NOT be filled (e.g. the hole in "O").</td></tr>
+        <tr><td><b>Hatch</b></td><td>Parallel straight fill lines.</td></tr>
+        <tr><td><b>Boustrophedon</b></td><td>"Ox-plough" back-and-forth path; alternating scanline direction.</td></tr>
+        <tr><td><b>Contour / offset fill</b></td><td>Concentric inward copies of the boundary.</td></tr>
+        <tr><td><b>Kerf / tool offset</b></td><td>Physical width the tool removes/leaves; requires geometric offsetting.</td></tr>
+        <tr><td><b>Overcut</b></td><td>A small extension past a closed loop's start so a blade fully severs it.</td></tr>
+        <tr><td><b>Modal state</b></td><td>A machine setting that persists until changed (units, power, feed).</td></tr>
+        <tr><td><b>Dialect</b></td><td>A concrete command language (GRBL, HPGL, Marlin…).</td></tr>
+        <tr><td><b>Distance field</b></td><td>A grid where each interior cell holds its distance to the boundary; its iso-lines are the inward offsets (used for robust Contour/Spiral, <a href="02-geometry.html">Ch. 2</a>).</td></tr>
+        <tr><td><b>Iso-contour</b></td><td>A curve of constant value in a field; here, the set <code>{distance = d}</code> = the inward offset by <code>d</code>. Extracted with <em>marching squares</em>.</td></tr>
+        <tr><td><b>Nest</b></td><td>A maximal group of concentric offset rings reachable without a lift; a hole or pinch starts a new nest. Spiral emits one stroke per nest.</td></tr>
+        <tr><td><b>Lift</b></td><td>A pen-up / disengage-travel-re-engage cycle; the dominant time cost, hence fills are optimised to minimise it (<a href="03-fill-algorithms.html">Ch. 3</a>).</td></tr>
+        <tr><td><b>Luminance</b></td><td>Perceptual brightness <code>0.299R+0.587G+0.114B</code> of a fill colour; drives shade-by-colour fill density (<a href="03-fill-algorithms.html">Ch. 3</a>).</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2>5. Seven principles for generating this code</h2>
+    <ol>
+      <li><b>Never couple geometry to a dialect.</b> Geometry returns chains; a separate emitter turns chains into text.</li>
+      <li><b>A chain is the contract.</b> Design each feature to <em>append chains to a list</em>. Ordering and emission then work uniformly for all of them.</li>
+      <li><b>Every tunable has a rationale.</b> Spacing, tolerance, thresholds - state <em>why</em> the value is what it is, so it can be re-tuned intelligently.</li>
+      <li><b>Prefer connected paths over disjoint ones.</b> Time cost is dominated by tool lifts and travel, not by engaged distance (see the cost model in <a href="03-fill-algorithms.html">Ch. 3</a>).</li>
+      <li><b>Always have a fallback.</b> Any strategy can degenerate on a pathological shape; a robust generator falls back to the simplest correct method rather than emitting nothing.</li>
+      <li><b>Prefer topology-robust primitives.</b> A primitive that quietly fails on holes or concavity (e.g. a naive per-vertex inset) makes the selector above it <em>lie</em>: it picks the right strategy, which then silently degrades. Build the offset on a <b>distance field</b> (<a href="02-geometry.html">Ch. 2</a>) so it works for any topology, and the whole fill stack becomes honest.</li>
+      <li><b>An auto-selector encodes its strategies' current capability.</b> When you strengthen a strategy (make Spiral topology-robust, see <a href="03-fill-algorithms.html">Ch. 3</a>), <b>re-tune the selector</b> to exploit it - otherwise the improvement is left unused. Selector rules are not permanent; they track what the strategies behind them <em>can now do</em>.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Grasp this chapter and you have half the picture</span>
+      <p>The rest of the book simply answers: <em>how to produce the best chains</em> for each source type (fill, outline, text, image), <em>how to order</em> them, and <em>how to translate</em> them into code. It all rests on the chain model you just learned.</p>
+    </div>
+
+    <div class="pager">
+      <a href="index.html">
+        <div class="dir">← Previous</div>
+        <div class="ttl">Cover &amp; Introduction</div>
+      </a>
+      <a class="next" href="01-architecture.html">
+        <div class="dir">Next chapter →</div>
+        <div class="ttl">1 · Architecture &amp; Pipeline</div>
+      </a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

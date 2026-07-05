@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>4 · Đường viền &amp; Contour - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html" class="active"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 4 · Đường viền</span>
+    <h1>Đường viền &amp; Contour</h1>
+    <p class="lead">Đường viền tưởng như là nguồn chuỗi đơn giản nhất: cứ vẽ theo biên của hình. Nhưng "vẽ theo biên" giấu bên trong vài quyết định không hề tầm thường - khi nào thì thực sự phát sinh nó, nó tương tác với vùng tô ra sao, và những phép bù trừ vật lý mà một lưỡi dao cắt cần đến (overcut, bù kerf/tool offset). Tất cả những điều này đều độc lập với ngôn ngữ máy đích.</p>
+
+    <h2>1. Đường viền là gì</h2>
+    <p><b>Chuỗi viền</b> (outline chains) của một hình là các polyline của đường biên (boundary path) sau khi hình đã trải qua ba bước xử lý:</p>
+
+    <div class="steps">
+      <div class="step">1 · Bake transform vào không gian thế giới</div>
+      <span class="arrow">→</span>
+      <div class="step">2 · Làm phẳng đường cong ở dung sai mịn</div>
+      <span class="arrow">→</span>
+      <div class="step">3 · Tách subpath (biên ngoài + mỗi biên lỗ)</div>
+    </div>
+
+    <p>Cụ thể: (1) mọi phép biến đổi (tịnh tiến/xoay/co giãn/xén) được <b>bake</b> vào không gian thế giới (xem <a href="01-kien-truc.html">Ch. 1 §2</a>); (2) các đường cong được <b>làm phẳng</b> ở dung sai mịn (<a href="02-hinh-hoc.html">Ch. 2 §1</a>); (3) đường path được tách thành các <b>subpath</b> của nó - biên ngoài cộng với biên của từng lỗ - mỗi subpath trở thành một chuỗi.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Quy tắc chuyển subpath → chuỗi</span>
+      <p>Mỗi subpath có <b>từ 2 điểm trở lên</b> trở thành đúng một chuỗi. Subpath <b>đóng</b> (closed) trở thành chuỗi đóng (điểm đầu ≈ điểm cuối); subpath <b>hở</b> (open) - một nét vẽ không khép kín, một path nhập từ file mà chưa đóng - giữ nguyên là chuỗi hở. Không cần thêm gì khác: đường viền thuần tuý là <em>hình học của biên</em>, không phụ thuộc quy tắc tô hay hướng cuộn.</p>
+    </div>
+
+    <h2>2. Khi nào phát sinh đường viền (quy tắc hiện diện)</h2>
+    <p>Đường viền được phát sinh chỉ từ <b>hình học/kiểu dáng</b> của hình - không phụ thuộc chế độ máy - khi <b>một trong hai</b> điều kiện sau đúng:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Điều kiện</th><th>Lý do</th></tr></thead>
+      <tbody>
+        <tr><td>Hình có kiểu <b>stroke</b> (nét viền)</td><td>Có một đường biên rõ ràng cần được vẽ ra.</td></tr>
+        <tr><td>Hình <b>không có fill</b> (không tô)</td><td>Không có gì để tô, nên đường viền <em>chính là</em> tác phẩm.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>Ngược lại, một hình <b>được tô nhưng không có stroke</b> chỉ phát ra chuỗi tô (<a href="03-thuat-toan-to.html">Ch. 3</a>), <b>không</b> phát đường viền - bản thiết kế không quy định đường biên, nên không tự bịa ra một đường biên nào.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Ba tổ hợp fill/stroke và chuỗi được phát sinh tương ứng">
+        <g font-family="sans-serif">
+          <!-- combo 1: stroke only, no fill -->
+          <g>
+            <text x="110" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Có stroke, không fill</text>
+            <circle cx="110" cy="105" r="46" fill="none" stroke="#2563eb" stroke-width="4"/>
+            <path d="M40 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="110" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Phát: <tspan font-weight="700" fill="#2563eb">viền</tspan> (là toàn bộ tác phẩm)</text>
+          </g>
+          <!-- combo 2: fill only, no stroke -->
+          <g>
+            <text x="360" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Có fill, không stroke</text>
+            <circle cx="360" cy="105" r="46" fill="#f3ede1" stroke="none"/>
+            <path d="M290 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="360" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Phát: <tspan font-weight="700" fill="#7c3aed">chỉ chuỗi tô</tspan>, không viền</text>
+          </g>
+          <!-- combo 3: fill and stroke -->
+          <g>
+            <text x="610" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Có cả fill và stroke</text>
+            <circle cx="610" cy="105" r="46" fill="#f3ede1" stroke="#2563eb" stroke-width="4"/>
+            <path d="M540 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="610" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Phát: <tspan font-weight="700" fill="#7c3aed">tô</tspan> + <tspan font-weight="700" fill="#2563eb">viền</tspan> (xem §2b)</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Quy tắc hiện diện: đường viền được phát khi có stroke, hoặc khi không có fill (viền tự nó là artwork). Chỉ khi có fill mà <em>không</em> có stroke thì đường viền mới bị bỏ qua.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Đừng dựa vào "vùng tô đã chạm biên"</span>
+      <p>Đúng là bộ tô quét dòng (scanline) chạm tới tận biên - nhưng các bộ tô dựa trên inset (contour/spiral, <a href="03-thuat-toan-to.html">Ch. 3 §3.4</a>) dừng lại cách biên khoảng <em>nửa khoảng cách dòng</em> và để lại một viền mỏng chưa được tô. Nếu việc phủ chính xác tới biên trên một hình được tô mà không viền là quan trọng, hãy làm cho bộ tô ôm sát biên hơn, thay vì tự thêm một đường viền lạc vào.</p>
+    </div>
+
+    <h3>2b. Hình vừa có fill vừa có stroke - các quyết định khi phát sinh</h3>
+    <p>Khi một hình có <b>cả</b> fill và stroke, nó sinh ra hai tập chuỗi trên cùng một vùng biên. Quy tắc dispatch cộng dồn nói "phát cả hai" - nhưng để lại ba quyết định cụ thể mà lý thuyết không tự ấn định:</p>
+
+    <div class="kv">
+      <div><dt>Thiết lập (settings)</dt><dd>Phần tô và phần viền của một hình nằm trên <em>cùng</em> layer/nhóm-công-cụ, nên chúng kế thừa <b>cùng</b> công suất/tốc độ/số lượt (<a href="08-sinh-ma.html">Ch. 8 §7</a>). Nếu viền cần thiết lập khác (đậm hơn hoặc cắt hẳn, trong khi fill chỉ tô nhạt), hãy đặt nó trên một <b>layer riêng</b>.</dd></div>
+      <div><dt>Thứ tự (order)</dt><dd>Ưu tiên <b>tô trước, viền sau</b>, để một đường biên sắc nét không bị các lượt tô sau đó làm nhoè. Sắp xếp tham lam (<a href="07-sap-xep.html">Ch. 7</a>) <em>không tự</em> đảm bảo điều này - phải dùng khoá ái lực/nhóm (affinity key, <a href="07-sap-xep.html">Ch. 7 §5</a>) để giữ cặp tô-rồi-viền của một hình đi liền nhau.</dd></div>
+      <div><dt>Biên chung / đi lại hai lần</dt><dd>Các đường tô ngoài cùng của scanline fill và đường viền đều nằm sát biên; trên một công cụ đánh dấu, biên chung này có thể bị đi qua hai lần. Thường vô hại (thậm chí có lợi - biên sắc hơn). Để tránh, hãy <b>inset phần fill vào ½·lineWidth</b> để đường viền là bên duy nhất "sở hữu" biên. Lưu ý đây <em>không phải</em> là <b>hàn điểm</b> (welding) ở <a href="10-do-muot.html">Ch. 10 §3.1</a>: welding nối các đoạn rời rạc <em>trong cùng một</em> nguồn chuỗi; nó không bao giờ gộp fill với một đường viền riêng biệt.</dd></div>
+    </div>
+
+    <h2>3. Đường viền và Contour fill: đừng nhầm lẫn</h2>
+    <p>Cùng dùng chung một nguyên thuỷ - vẽ theo biên - nhưng hai tính năng trả lời hai câu hỏi khác nhau, và cần được giữ tách biệt:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Outline (chương này)</h4><p>Biên được vẽ <b>một lần</b>. Một lượt duy nhất dọc theo mỗi subpath. Trả lời câu hỏi "vẽ đường biên".</p></div>
+      <div class="card"><h4>Contour fill (<a href="03-thuat-toan-to.html">Ch. 3 §3.4</a>)</h4><p>Biên được vẽ <b>nhiều lần</b>, mỗi lần inset (thu vào) thêm một khoảng cách dòng, để <b>phủ kín diện tích</b> bên trong. Trả lời câu hỏi "tô phần bên trong bằng cách lặp lại biên".</p></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 660 260" width="660" role="img" aria-label="So sánh outline một lượt và contour fill nhiều lượt thu vào">
+        <g font-family="sans-serif">
+          <text x="160" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">Outline - vẽ biên MỘT lần</text>
+          <path d="M80 200 C 60 100, 260 100, 240 200 C 260 250, 60 250, 80 200 Z" fill="#f3ede1" fill-opacity=".4" stroke="#2563eb" stroke-width="4"/>
+          <circle cx="80" cy="200" r="5" fill="#2563eb"/>
+          <text x="160" y="245" text-anchor="middle" font-size="11" fill="#4a5568">1 lượt dọc biên</text>
+
+          <line x1="330" y1="40" x2="330" y2="230" stroke="#dfe5ee" stroke-width="1"/>
+
+          <text x="500" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">Contour fill - vẽ biên NHIỀU lần, thu vào</text>
+          <path d="M420 200 C 400 100, 600 100, 580 200 C 600 250, 400 250, 420 200 Z" fill="none" stroke="#2563eb" stroke-width="3"/>
+          <path d="M432 195 C 416 118, 584 118, 570 195 C 584 235, 416 235, 432 195 Z" fill="none" stroke="#2563eb" stroke-width="2.4" opacity=".8"/>
+          <path d="M446 190 C 434 138, 566 138, 558 190 C 566 220, 434 220, 446 190 Z" fill="none" stroke="#2563eb" stroke-width="2" opacity=".65"/>
+          <path d="M462 188 C 452 156, 548 156, 540 188 C 548 205, 452 205, 462 188 Z" fill="none" stroke="#2563eb" stroke-width="1.6" opacity=".5"/>
+          <text x="500" y="245" text-anchor="middle" font-size="11" fill="#4a5568">N lượt, mỗi lượt thu vào 1 khoảng cách dòng</text>
+        </g>
+      </svg>
+      <figcaption>Hai tính năng dùng chung nguyên thuỷ vẽ-theo-biên, nhưng khác mục đích: <b>outline</b> vẽ biên đúng một lần để tạo đường viền, còn <b>contour fill</b> lặp lại biên đã inset dần để phủ kín cả vùng bên trong.</figcaption>
+    </figure>
+
+    <h2>4. Bù trừ công cụ tuỳ chọn (dao/lưỡi/kerf)</h2>
+    <p>Đây là các bước <b>hậu xử lý tuỳ chọn</b> áp dụng lên những chuỗi viền đã được chọn xong, chỉ liên quan khi công cụ là một <b>dao cắt vật lý</b>. Một công cụ đánh dấu (bút, laser marking) không cần bất kỳ bước nào trong số này - vết đánh dấu nằm ngay trên path. Chúng không phải một chế độ hay pipeline riêng; với công cụ đánh dấu, bỏ qua hoàn toàn.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Thứ tự thao tác so với sắp xếp (Ch. 7)</span>
+      <p>Áp dụng <b>bù kerf TRƯỚC khi sắp xếp</b> - nó làm thay đổi hình học mà bước sắp xếp và tái định gốc vòng (re-rooting) sẽ thao tác lên. Áp dụng <b>overcut SAU khi sắp xếp và tái định gốc vòng</b> - overcut kéo dài qua điểm bắt đầu <em>cuối cùng</em> của vòng, nên phải chạy trên chuỗi đã định hướng và tái định gốc xong, cắt ngang lại đúng nơi đường nối (seam) đã dừng ở đó. Đảo ngược thứ tự này (overcut trước khi tái định gốc) sẽ đặt đoạn kéo dài vào giữa vòng và không cắt đứt được gì.</p>
+    </div>
+
+    <div class="kv">
+      <div><dt>4.1 · Overcut</dt><dd>Kéo dài một đoạn nhỏ qua điểm bắt đầu của vòng kín để lưỡi dao cắt đứt hẳn seam.</dd></div>
+      <div><dt>4.2 · Bù kerf / tool offset</dt><dd>Offset đường path bằng nửa bề rộng kerf để kích thước cắt ra đúng bằng kích thước vẽ.</dd></div>
+      <div><dt>4.3 · Làm sắc góc</dt><dd>Bù phần góc bị bo tròn do lưỡi dao trễ sau trục xoay.</dd></div>
+    </div>
+
+    <h3>4.1 Overcut (khép kín một vòng bị cắt hụt)</h3>
+    <p>Một dao rọc kéo (drag knife, dùng trong máy cắt vinyl/decal) có mũi lưỡi nằm <b>lệch phía sau</b> trục xoay của nó. Trên một vòng kín, ngay điểm bắt đầu của vòng chỉ mới được <em>score</em> (khắc hờ) cho tới khi lưỡi kịp xoay vào đúng hướng đi tiếp theo; vòng cắt có thể không tách rời hoàn toàn tại điểm nối (seam). <b>Overcut</b> khắc phục điều này:</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Định nghĩa overcut</span>
+      <p>Sau khi khép kín một vòng, kéo dài path thêm một đoạn nhỏ (≈ 0.5-1.0 mm) <b>qua điểm bắt đầu, tiếp tục theo đúng hướng của đoạn đầu tiên</b>, để lưỡi dao cắt ngang lại seam và tách rời hoàn toàn.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 260" width="640" role="img" aria-label="Minh hoạ overcut: dao rọc kéo lệch trục xoay và đoạn kéo dài qua điểm bắt đầu">
+        <g font-family="sans-serif">
+          <path d="M200 200 C 150 90, 380 60, 420 150 C 450 220, 260 250, 200 200 Z" fill="#f3ede1" fill-opacity=".4" stroke="#2563eb" stroke-width="3.5"/>
+          <!-- overcut extension segment, dashed accent -->
+          <path d="M200 200 L 232 178" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="200" cy="200" r="6" fill="#fff" stroke="#2563eb" stroke-width="2.5"/>
+          <text x="200" y="228" text-anchor="middle" font-size="11.5" fill="#2563eb" font-weight="700">điểm bắt đầu</text>
+          <circle cx="232" cy="178" r="4" fill="#dc2626"/>
+          <text x="255" y="168" font-size="11.5" fill="#dc2626" font-weight="700">overcut ≈ 0.5-1.0 mm</text>
+
+          <!-- pivot vs blade tip illustration, offset -->
+          <g transform="translate(470,150)">
+            <circle cx="0" cy="0" r="34" fill="#eef2f8" stroke="#dfe5ee"/>
+            <circle cx="0" cy="0" r="4" fill="#4a5568"/>
+            <text x="0" y="-42" text-anchor="middle" font-size="10.5" fill="#4a5568">trục xoay</text>
+            <circle cx="10" cy="16" r="3.5" fill="#dc2626"/>
+            <text x="34" y="26" font-size="10.5" fill="#dc2626">mũi lưỡi (lệch sau)</text>
+            <line x1="0" y1="0" x2="10" y2="16" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="2 2"/>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Lưỡi dao rọc kéo lệch phía sau trục xoay nên chưa cắt đứt ngay tại điểm bắt đầu. Overcut kéo dài path một đoạn nhỏ qua điểm đó, theo đúng hướng đoạn đầu tiên, để lưỡi cắt ngang lại seam.</figcaption>
+    </figure>
+
+    <p>Thuật toán, áp dụng sau khi chuỗi đã đóng vòng:</p>
+    <pre><code><span class="kw">if</span> chain.is_closed <span class="kw">and</span> overcut &gt; <span class="st">0</span>:
+    dir = unit(chain[<span class="st">1</span>] − chain[<span class="st">0</span>])
+    chain.append(chain[<span class="st">0</span>] + dir × overcut)  <span class="cm">// kéo dài qua điểm bắt đầu</span></code></pre>
+
+    <p>Chỉ áp dụng cho chuỗi <b>đóng</b> và chỉ khi công cụ là <b>dao cắt</b>. Với công cụ đánh dấu, đoạn kéo dài này sẽ để lại một vệt thừa - không áp dụng. Không có tác dụng (no-op) với chuỗi hở hoặc giá trị overcut quá nhỏ.</p>
+
+    <h3>4.2 Bù kerf / tool offset</h3>
+    <p>Công cụ lấy đi (hoặc đánh dấu) một bề rộng vật liệu nhất định. Để cắt ra đúng kích thước đã vẽ, offset đường path bằng nửa bề rộng kerf:</p>
+
+    <ul>
+      <li><b>Offset ra ngoài</b> khi cắt một lỗ đúng kích thước, hoặc một biên ngoài cần giữ nguyên kích thước ngoài.</li>
+      <li><b>Offset vào trong</b> cho ý định ngược lại.</li>
+    </ul>
+
+    <p>Dùng chung nguyên thuỷ <b>polygon offsetting</b> như contour fill (<a href="02-hinh-hoc.html">Ch. 2 §7</a>). Nhiều máy cắt đơn giản bỏ qua việc bù kerf thực thụ, thay vào đó ghi lại <b>blade offset</b> đã lắp đặt như một ghi chú hiệu chuẩn và làm sắc góc bằng một đoạn di chuyển thêm nhỏ; bù kerf đầy đủ là giải pháp tổng quát khi độ chính xác kích thước thực sự quan trọng.</p>
+
+    <figure>
+      <svg viewBox="0 0 660 260" width="660" role="img" aria-label="Hướng offset kerf khác nhau cho biên ngoài và biên lỗ">
+        <g font-family="sans-serif">
+          <!-- outer part with a hole -->
+          <rect x="70" y="60" width="220" height="150" rx="14" fill="#f3ede1" stroke="#2563eb" stroke-width="2.5"/>
+          <rect x="60" y="48" width="240" height="174" rx="18" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="4 4"/>
+          <circle cx="180" cy="135" r="34" fill="#ffffff" stroke="#2563eb" stroke-width="2.5"/>
+          <circle cx="180" cy="135" r="26" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="4 4"/>
+          <text x="180" y="235" text-anchor="middle" font-size="11.5" fill="#4a5568">Biên ngoài → offset RA NGOÀI · biên lỗ → offset VÀO TRONG</text>
+
+          <!-- legend -->
+          <g transform="translate(400,70)">
+            <rect x="0" y="0" width="230" height="140" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+            <line x1="16" y1="30" x2="46" y2="30" stroke="#2563eb" stroke-width="3"/>
+            <text x="54" y="34" font-size="11.5" fill="#4a5568">Path gốc đã vẽ</text>
+            <line x1="16" y1="60" x2="46" y2="60" stroke="#dc2626" stroke-width="3" stroke-dasharray="4 4"/>
+            <text x="54" y="64" font-size="11.5" fill="#4a5568">Path sau bù kerf (½ bề rộng)</text>
+            <text x="16" y="100" font-size="11" fill="#8a94a6">Hướng offset phụ thuộc</text>
+            <text x="16" y="118" font-size="11" fill="#8a94a6">vai trò biên ngoài / lỗ</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Bù kerf theo cùng nguyên thuỷ polygon offsetting với contour fill, nhưng <b>hướng offset</b> phải khớp với vai trò của subpath: biên ngoài offset ra ngoài để giữ kích thước phần thân, biên lỗ offset vào trong để giữ kích thước lỗ.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Hướng offset là điểm dễ sai nhất</span>
+      <p>Offset một biên sai hướng làm thay đổi kích thước chi tiết đúng bằng một bề rộng kerf trọn vẹn. Gắn hướng offset với việc mỗi subpath là biên ngoài hay biên lỗ (độ sâu winding/even-odd, <a href="02-hinh-hoc.html">Ch. 2 §4</a>).</p>
+    </div>
+
+    <h3>4.3 Làm sắc góc (dao rọc kéo)</h3>
+    <p>Vì lưỡi dao trễ sau trục xoay, các góc nhọn bị bo tròn đi. Cách khắc phục chuẩn: tại mỗi góc, nhấc-xoay (lift-swivel) hoặc di chuyển thêm (over-travel) một đoạn bằng độ dài blade-offset để mũi lưỡi tới đúng góc thật trước khi đi vào cạnh tiếp theo. Đây là một phiên bản tinh chỉnh theo từng góc của chính ý tưởng overcut.</p>
+
+    <h2>5. Nhiều lượt (multi-pass)</h2>
+    <p>Vật liệu dày (hoặc cần vết đậm hơn) cần nhiều lượt đi qua cùng một đường viền. Phát ra các chuỗi <b>đã sắp xếp</b>, sau đó lặp lại toàn bộ tập đó <code>N</code> lần (thường hạ công cụ xuống thêm một chút mỗi lượt, nếu máy hỗ trợ trục Z).</p>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Sắp xếp một lần, lặp lại kết quả</span>
+      <p>Sắp xếp (order) <b>đúng một lần</b>; lặp lại kết quả đã sắp xếp để mọi lượt đều đi theo <em>đúng cùng</em> một đường đã tối ưu quãng di chuyển. Không sắp xếp lại cho từng lượt.</p>
+    </div>
+
+    <h2>6. Biến thể nét: nét đứt &amp; nét biến bề rộng</h2>
+    <p>Hai kiểu stroke phổ biến cần được tiền xử lý <b>trước khi</b> đường biên trở thành chuỗi:</p>
+
+    <h3>6.1 Nét đứt / nét chấm (dashed / dotted)</h3>
+    <p>Một dash array biến một đường biên liên tục thành <b>nhiều chuỗi hở ngắn</b> với khoảng hở xen giữa. Đi dọc theo path theo độ dài cung, phát ra một đoạn "on" cho mỗi độ dài dash và bỏ qua mỗi độ dài gap. Mỗi dash là một chuỗi độc lập (bước sắp xếp sẽ di chuyển giữa chúng). Thực hiện bước này <b>sau khi làm phẳng</b> (đo độ dài dọc theo polyline).</p>
+
+    <figure>
+      <svg viewBox="0 0 640 180" width="640" role="img" aria-label="Đường biên liên tục biến thành nhiều chuỗi hở ngắn khi áp dụng nét đứt">
+        <g font-family="sans-serif">
+          <text x="150" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Biên liên tục</text>
+          <path d="M40 90 Q150 20 260 90" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+
+          <path d="M400 90 L470 90" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#ar4)"/>
+
+          <text x="560" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Nhiều chuỗi hở ngắn</text>
+          <path d="M480 90 Q490 68 505 60" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M525 52 Q545 46 565 46" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M585 50 Q605 58 620 72" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M480 90 Q470 112 495 122" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="3 3" opacity=".6"/>
+          <text x="550" y="150" text-anchor="middle" font-size="11" fill="#4a5568">mỗi "dash" = một chuỗi độc lập, cách nhau bởi "gap"</text>
+        </g>
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Một dash array biến một biên vẽ liên tục thành nhiều chuỗi hở ngắn, mỗi chuỗi tương ứng với một đoạn "on" của mẫu nét đứt; bước sắp xếp (Ch. 7) sẽ tự quyết định thứ tự di chuyển giữa chúng.</figcaption>
+    </figure>
+
+    <h3>6.2 Nét biến bề rộng (calligraphic, áp lực, vuốt nhọn)</h3>
+    <p>Hai lựa chọn:</p>
+    <ul>
+      <li><b>(a)</b> coi stroke như một <b>vùng được tô</b>: mở rộng đường trục (centerline) thành đường bao biến-bề-rộng của nó rồi tô nó (<a href="03-thuat-toan-to.html">Ch. 3</a>); hoặc</li>
+      <li><b>(b)</b> nếu bề rộng vết của công cụ đã khớp sẵn, chỉ vẽ <b>đường trục</b> một lần và bỏ qua bề rộng.</li>
+    </ul>
+    <p>Chọn (a) khi sự biến thiên bề rộng có thể nhìn thấy ở tỉ lệ công cụ; chọn (b) khi không.</p>
+
+    <h2>7. Tổng kết: xử lý hở &amp; kín</h2>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Trường hợp</th><th>Hành vi của đường viền</th></tr></thead>
+      <tbody>
+        <tr><td>Subpath đóng, công cụ đánh dấu</td><td>Vẽ một lượt; không overcut.</td></tr>
+        <tr><td>Subpath đóng, công cụ cắt</td><td>Vẽ một lượt + <b>overcut</b>; có thể kèm bù kerf.</td></tr>
+        <tr><td>Subpath hở</td><td>Vẽ từ đầu mút này sang đầu mút kia; bước sắp xếp có thể đảo chiều nó; không bao giờ overcut.</td></tr>
+        <tr><td>Subpath là lỗ</td><td>Phát sinh như mọi subpath khác; với công cụ cắt, offset theo hướng <em>ngược lại</em> so với biên ngoài.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">"Công cụ đánh dấu" vs "công cụ cắt"</span>
+      <p>Đây là phân biệt theo <b>năng lực của công cụ</b> (công cụ có làm đứt vật liệu hay không?), <b>không phải</b> một chế độ giao diện/công việc. Nó chỉ thay đổi việc các phép bù trừ tuỳ chọn ở §4 có được áp dụng hay không; bản thân các chuỗi viền được tạo ra giống hệt nhau trong cả hai trường hợp.</p>
+    </div>
+
+    <h2>8. Checklist (khi sinh chuỗi viền)</h2>
+    <ul>
+      <li>Bake mọi phép biến đổi, sau đó làm phẳng ở dung sai mịn.</li>
+      <li>Phát một chuỗi cho mỗi subpath (≥ 2 điểm).</li>
+      <li>Áp dụng quy tắc hiện diện (§2) để viền và tô không vẽ chồng lên nhau một cách vô ý.</li>
+      <li>Chỉ với công cụ cắt: overcut các vòng đóng; cân nhắc bù kerf với đúng hướng cho từng vai trò subpath.</li>
+      <li>Lặp lại các chuỗi <em>đã sắp xếp</em> cho multi-pass; không sắp xếp lại cho từng lượt.</li>
+      <li>Trả về chuỗi trong không gian thế giới; việc sắp xếp và phát mã dùng chung cho mọi nguồn chuỗi khác.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="03-thuat-toan-to.html"><div class="dir">← Trước</div><div class="ttl">3 · Thuật toán tô &amp; Bộ chọn tự động</div></a>
+      <a class="next" href="05-chu-net-don.html"><div class="dir">Chương tiếp →</div><div class="ttl">5 · Chữ nét đơn (Centerline)</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

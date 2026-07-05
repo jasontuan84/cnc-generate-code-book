@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>9 · Khắc Raster (ảnh bitmap) - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html" class="active"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 9 · Raster</span>
+    <h1>Khắc Raster (ảnh bitmap)</h1>
+    <p class="lead">Một ảnh bitmap <b>không phải</b> là nguồn sinh chuỗi. Không thể "vạch viền" hay "tô" một tấm ảnh chụp bằng polyline một cách có ý nghĩa; thay vào đó, công cụ quét qua ảnh theo từng dòng và <b>điều biến công suất</b> theo từng điểm ảnh (tối = mạnh, sáng = tắt). Cách làm này chỉ áp dụng cho những máy có thể thay đổi công suất <em>trong khi đang di chuyển</em> (laser, đầu khắc áp lực biến thiên) - một cây bút hay lưỡi dao thường không thể tái hiện sắc độ, nên đơn giản là bỏ qua các hình raster.</p>
+
+    <p>Đây là phần duy nhất trong hệ thống <em>đi vòng qua</em> pipeline chuỗi/sắp xếp đã học ở các chương trước; nó tự phát ra các lệnh di chuyển của riêng mình. Chương này vẫn nằm trong sách vì "chuyển bản vẽ thành mã máy" phải xử lý được cả ảnh, không chỉ hình vector.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Bỏ qua với công cụ không điều biến được</span>
+      <p>Nếu công cụ đang chọn là bút hoặc dao (không thể thay đổi cường độ khi di chuyển), phần raster bị <b>bỏ qua hoàn toàn</b> - không cố "giả lập" sắc độ bằng mật độ nét, vì đó là việc của hoạ tiết/hatch (Chương 6), không phải của bộ khắc raster này.</p>
+    </div>
+
+    <h2>1. Mô hình</h2>
+    <p>Toàn bộ đường đi từ ảnh đến mã máy gói trong bốn phép biến đổi liên tiếp: lấy mẫu ảnh lên lưới vật lý, biến giá trị xám thành lưới công suất, rồi quét lưới đó theo kiểu boustrophedon và gộp các ô cùng công suất thành một nét.</p>
+
+    <div class="steps">
+      <span class="step">Ảnh (pixel + tông)</span><span class="arrow">→</span>
+      <span class="step">Lưới mm theo bước quét</span><span class="arrow">→</span>
+      <span class="step">Lưới công suất</span><span class="arrow">→</span>
+      <span class="step">Quét boustrophedon, gộp run</span><span class="arrow">→</span>
+      <span class="step">Di chuyển / Nét làm việc</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 740 260" width="740" role="img" aria-label="Sơ đồ mô hình bốn giai đoạn của khắc raster">
+        <g font-family="sans-serif">
+          <rect x="14" y="30" width="150" height="76" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="89" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">Ảnh nguồn</text>
+          <text x="89" y="76" text-anchor="middle" font-size="11" fill="#4a5568">pixel + tông màu</text>
+          <text x="89" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">0 (đen) .. 255 (trắng)</text>
+
+          <rect x="196" y="30" width="150" height="76" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="271" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">Lưới mm</text>
+          <text x="271" y="76" text-anchor="middle" font-size="11" fill="#4a5568">colStep × rowStep</text>
+          <text x="271" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">mẫu tại tâm ô</text>
+
+          <rect x="378" y="30" width="150" height="76" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="453" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">Lưới công suất</text>
+          <text x="453" y="76" text-anchor="middle" font-size="11" fill="#4a5568">gamma hoặc dither</text>
+          <text x="453" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">[minPower, maxPower]</text>
+
+          <rect x="560" y="30" width="166" height="76" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="643" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#9be59b">Quét &amp; gộp run</text>
+          <text x="643" y="76" text-anchor="middle" font-size="11" fill="#d6e2ff">boustrophedon</text>
+          <text x="643" y="92" text-anchor="middle" font-size="10" fill="#6b86b8">run-length merge</text>
+
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M164 68 h22" marker-end="url(#arR)"/>
+            <path d="M346 68 h22" marker-end="url(#arR)"/>
+            <path d="M528 68 h22" marker-end="url(#arR)"/>
+          </g>
+        </g>
+
+        <!-- output lane: alternating travel / working -->
+        <g font-family="sans-serif">
+          <text x="20" y="150" font-size="11.5" fill="#8a94a6">Đầu ra (một dòng quét):</text>
+          <path d="M20 175 L60 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M60 175 L180 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M180 175 L230 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M230 175 L420 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M420 175 L470 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M470 175 L560 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M560 175 L640 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M640 175 L720 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+
+          <text x="120" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">công suất cao</text>
+          <text x="290" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">công suất thấp</text>
+          <text x="510" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">công suất trung bình</text>
+
+          <text x="370" y="235" text-anchor="middle" font-size="11.5" fill="#8a94a6">Bộ phát mã (Chương 8) dịch travel/working + công suất sang G0/G1+M3/M4 của dialect đích.</text>
+        </g>
+
+        <defs>
+          <marker id="arR" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc (engaged, công suất &gt; 0)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Di chuyển (travel, qua vùng trắng/bị xén)</span>
+      </div>
+      <figcaption>Bốn giai đoạn biến ảnh thành chuyển động máy. Cũng như mọi nguồn khác, thuật toán chỉ phát ra <b>travel</b>/<b>engaged</b> trừu tượng kèm một giá trị công suất; bộ phát mã (<a href="08-sinh-ma.html">Chương 8</a>) mới ánh xạ chúng sang dialect cụ thể (GRBL <code>G0</code>/<code>G1</code>+<code>M4</code> chẳng hạn - các chữ cái dialect ở đây chỉ để minh hoạ).</figcaption>
+    </figure>
+
+    <h2>2. Lưới lấy mẫu: không bao giờ oversample</h2>
+    <p>Bước quét được chọn từ <b>cả hai</b> yếu tố: khoảng cách khắc mong muốn và độ phân giải nguồn của ảnh:</p>
+
+    <pre><code><span class="fn">colStep</span> = <span class="kw">max</span>(interval, imageWidthMm  / imagePixelsWide)
+<span class="fn">rowStep</span> = <span class="kw">max</span>(interval, imageHeightMm / imagePixelsTall)</code></pre>
+
+    <ul>
+      <li><code>interval</code> - khoảng cách giữa các dòng khắc (phụ thuộc vật liệu/chùm tia).</li>
+      <li><code>max(...)</code> ngăn việc <b>oversampling</b> bitmap: quét mịn hơn một điểm ảnh nguồn là vô ích, chỉ tốn thêm chuyển động mà không thêm thông tin.</li>
+      <li><b>Công việc có giới hạn:</b> chặn tổng số ô (<code>rows × cols ≤ kMaxCells</code>). Nếu vượt, làm thô cả hai bước theo hệ số <code>√(cells / kMaxCells)</code> và ghi lại một ghi chú dễ đọc cho người dùng. Điều này ngăn một ảnh lớn ở khoảng cách quét nhỏ tạo ra hàng triệu lệnh di chuyển.</li>
+    </ul>
+
+    <p>Lấy mẫu mỗi ô tại <b>tâm</b> của nó, trong không gian cục bộ của ảnh, để phép quét "cưỡi" theo đúng phép biến đổi của ảnh (xoay/co giãn). Các ô nằm ngoài một <b>mặt nạ xén (clip mask)</b> tuỳ chọn được coi là trắng (bỏ qua, không khắc).</p>
+
+    <figure>
+      <svg viewBox="0 0 700 280" width="700" role="img" aria-label="Lưới lấy mẫu mm chồng lên lưới điểm ảnh nguồn">
+        <g font-family="sans-serif">
+          <text x="20" y="26" font-size="12.5" fill="#8a94a6">Điểm ảnh nguồn (mịn hơn nhiều so với colStep/rowStep)</text>
+          <!-- fine pixel grid -->
+          <g stroke="#e6ded0" stroke-width="1" fill="#fdfbf6">
+            <rect x="40" y="40" width="360" height="200"/>
+          </g>
+          <g stroke="#f0ebe0" stroke-width="1">
+            <path d="M76 40 V240 M112 40 V240 M148 40 V240 M184 40 V240 M220 40 V240 M256 40 V240 M292 40 V240 M328 40 V240 M364 40 V240"/>
+            <path d="M40 70 H400 M40 100 H400 M40 130 H400 M40 160 H400 M40 190 H400 M40 220 H400"/>
+          </g>
+
+          <!-- coarse mm sampling grid (colStep x rowStep) -->
+          <g stroke="#2563eb" stroke-width="2.2" fill="none">
+            <path d="M40 40 V240 M148 40 V240 M256 40 V240 M364 40 V240"/>
+            <path d="M40 40 H400 M40 130 H400 M40 220 H400"/>
+            <rect x="40" y="40" width="360" height="200"/>
+          </g>
+
+          <!-- cell centers -->
+          <g fill="#7c3aed">
+            <circle cx="94" cy="85" r="3.5"/><circle cx="202" cy="85" r="3.5"/><circle cx="310" cy="85" r="3.5"/>
+            <circle cx="94" cy="175" r="3.5"/><circle cx="202" cy="175" r="3.5"/><circle cx="310" cy="175" r="3.5"/>
+          </g>
+
+          <text x="200" y="258" text-anchor="middle" font-size="11" fill="#7c3aed">● tâm ô = điểm lấy mẫu (không gian cục bộ của ảnh)</text>
+
+          <!-- annotation braces -->
+          <text x="470" y="70" font-size="12" fill="#1e49b8" font-weight="700">colStep</text>
+          <path d="M420 40 L420 130" stroke="#1e49b8" stroke-width="1.5"/>
+          <path d="M415 40 L425 40 M415 130 L425 130" stroke="#1e49b8" stroke-width="1.5"/>
+
+          <text x="470" y="150" font-size="11" fill="#4a5568" width="200">= max(interval,</text>
+          <text x="470" y="168" font-size="11" fill="#4a5568">imgWmm / pxWide)</text>
+
+          <rect x="440" y="190" width="220" height="70" rx="8" fill="#fff8e6" stroke="#f2d88a"/>
+          <text x="452" y="210" font-size="11" fill="#8a5a00" font-weight="700">Nếu rows×cols &gt; kMaxCells:</text>
+          <text x="452" y="228" font-size="11" fill="#8a5a00">coarsen ×= √(cells / kMaxCells)</text>
+          <text x="452" y="246" font-size="10.5" fill="#8a5a00">→ ghi chú cho người dùng</text>
+        </g>
+      </svg>
+      <figcaption>Lưới quét (xanh, dày) luôn thô hơn hoặc bằng lưới điểm ảnh nguồn (mờ, mảnh) - không bao giờ mịn hơn. Mỗi ô lấy mẫu tại tâm (●), và nếu tổng số ô vượt trần <code>kMaxCells</code>, cả hai bước được làm thô đồng đều theo căn bậc hai tỉ lệ vượt trần (xem thêm <a href="11-hieu-nang.html">Chương 11</a> về giới hạn khối lượng công việc).</figcaption>
+    </figure>
+
+    <h2>3. Tái tạo sắc độ: hai chế độ</h2>
+    <p>Có hai cách biến giá trị xám của mỗi ô thành công suất khắc: điều biến liên tục theo đường cong gamma, hoặc rời rạc hoá bằng dithering 1-bit.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Chế độ</th><th>Đầu ra công suất</th><th>Phù hợp khi</th></tr></thead>
+      <tbody>
+        <tr><td><b>Grayscale + gamma</b></td><td>Liên tục, trong <code>[minPower, maxPower]</code></td><td>Công cụ điều biến mượt (laser diode), ảnh có dải xám rộng</td></tr>
+        <tr><td><b>Dithering 1-bit (Floyd&ndash;Steinberg)</b></td><td>Nhị phân, 0 hoặc full power</td><td>Công cụ chỉ bật/tắt, hoặc muốn nét "chấm" sắc hơn thay vì mảng xám mờ</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>3.1 Điều biến công suất theo mức xám (kèm gamma)</h3>
+    <p>Ánh xạ trực tiếp sắc độ của ô sang một mức công suất trong <code>[minPower, maxPower]</code>:</p>
+
+    <pre><code>v = <span class="st">255</span> - gray            <span class="cm"># đảo ngược: càng tối càng cháy mạnh nhất</span>
+<span class="kw">if</span> v &lt;= <span class="st">0</span>: power = <span class="st">0</span>      <span class="cm"># trắng → tắt (bỏ hẳn, không khắc)</span>
+t = v / <span class="st">255</span>
+<span class="kw">if</span> gamma != <span class="st">1</span>: t = t^gamma   <span class="cm"># đường cong tông: bù đáp ứng phi tuyến của vật liệu</span>
+power = minPower + <span class="fn">round</span>(t × (maxPower - minPower))</code></pre>
+
+    <ul>
+      <li><code>minPower</code> - một sàn công suất để các vùng xám nhạt vẫn để lại dấu vết (dưới ngưỡng kích hoạt của công cụ thì không gì hiện lên cả).</li>
+      <li><code>gamma</code> - uốn cong đường cong tông để khớp với cách vật liệu sẫm màu dần theo công suất thực tế (không tuyến tính).</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 640 320" width="640" role="img" aria-label="Đường cong gamma ánh xạ tông sang công suất">
+        <g font-family="sans-serif">
+          <!-- axes -->
+          <path d="M70 260 H560" stroke="#4a5568" stroke-width="1.5"/>
+          <path d="M70 260 V40" stroke="#4a5568" stroke-width="1.5"/>
+          <text x="315" y="290" text-anchor="middle" font-size="12" fill="#4a5568">tông đã đảo t = v/255  (0 sáng → 1 tối)</text>
+          <text x="34" y="150" text-anchor="middle" font-size="12" fill="#4a5568" transform="rotate(-90 34 150)">công suất</text>
+
+          <!-- min/max power band -->
+          <rect x="70" y="70" width="490" height="150" fill="#eefaf0" opacity=".5"/>
+          <text x="565" y="75" font-size="10.5" fill="#16a34a" text-anchor="end">maxPower</text>
+          <text x="565" y="225" font-size="10.5" fill="#16a34a" text-anchor="end">minPower</text>
+          <path d="M70 70 H560" stroke="#b7e3c2" stroke-width="1" stroke-dasharray="3 3"/>
+          <path d="M70 220 H560" stroke="#b7e3c2" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- linear reference gamma = 1 -->
+          <path d="M70 220 L560 70" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 5"/>
+          <text x="420" y="128" font-size="11" fill="#8a94a6">gamma = 1 (tuyến tính)</text>
+
+          <!-- gamma > 1 curve (bends down early, favors low power longer) -->
+          <path d="M70 220 C 260 218, 420 190, 560 70" fill="none" stroke="#7c3aed" stroke-width="2.6"/>
+          <text x="230" y="205" font-size="11" fill="#7c3aed">gamma &gt; 1</text>
+
+          <!-- gamma < 1 curve (rises fast) -->
+          <path d="M70 220 C 150 110, 320 75, 560 70" fill="none" stroke="#2563eb" stroke-width="2.6"/>
+          <text x="150" y="150" font-size="11" fill="#2563eb">gamma &lt; 1</text>
+
+          <text x="70" y="252" font-size="11" fill="#8a94a6">0</text>
+          <text x="555" y="252" font-size="11" fill="#8a94a6">1</text>
+        </g>
+      </svg>
+      <figcaption>Đường cong gamma bẻ cong ánh xạ tông→công suất trong dải <code>[minPower, maxPower]</code>. <code>gamma &gt; 1</code> giữ công suất thấp lâu hơn (nét sáng bền); <code>gamma &lt; 1</code> tăng công suất nhanh sớm (nét tối bung sớm). <code>gamma = 1</code> là ánh xạ tuyến tính thuần.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Thuật ngữ</span>
+      <p><b>Power/PWM modulation</b> - điều biến công suất đầu ra (thường qua PWM) theo giá trị mong muốn cho mỗi điểm. <b>Gamma correction</b> - phép biến đổi luỹ thừa <code>t^gamma</code> bù cho đáp ứng phi tuyến giữa tín hiệu điều khiển và độ sẫm màu quan sát được trên vật liệu.</p>
+    </div>
+
+    <h3>3.2 Dithering (1-bit) - Floyd&ndash;Steinberg</h3>
+    <p>Với công cụ chỉ bật/tắt, hoặc khi muốn một vẻ ngoài sắc nét hơn, chuyển sang các chấm bật/tắt <em>xấp xỉ</em> sắc độ bằng mật độ của chúng. <b>Floyd&ndash;Steinberg error diffusion</b>: ngưỡng hoá mỗi ô thành đen/trắng, rồi đẩy sai số lượng tử hoá sang các ô lân cận <em>chưa được duyệt</em> theo kernel <code>7/16, 3/16, 5/16, 1/16</code>:</p>
+
+    <pre><code><span class="kw">for</span> each cell (row-major):
+    old = buf[cell]; new = (old &lt; <span class="st">128</span>) ? <span class="st">0</span> : <span class="st">255</span>
+    err = old - new; buf[cell] = new
+    buf[right]       += err × <span class="st">7/16</span>
+    buf[below-left]  += err × <span class="st">3/16</span>
+    buf[below]       += err × <span class="st">5/16</span>
+    buf[below-right] += err × <span class="st">1/16</span></code></pre>
+
+    <p>Các ô đã dither sẵn ở dạng 0/255, nên chúng khắc ở <b>toàn công suất</b> (không dùng gamma). Các kernel khuếch tán khác (Atkinson, Jarvis) hoặc dithering có trật tự/Bayer là những lựa chọn thay thế.</p>
+
+    <figure>
+      <svg viewBox="0 0 620 300" width="620" role="img" aria-label="Kernel khuếch tán sai số Floyd-Steinberg">
+        <g font-family="sans-serif">
+          <!-- grid of cells: current row and next row -->
+          <g stroke="#dfe5ee" stroke-width="1.5" fill="#fdfbf6">
+            <rect x="140" y="60" width="70" height="60"/>
+            <rect x="210" y="60" width="70" height="60"/>
+            <rect x="70"  y="120" width="70" height="60"/>
+            <rect x="140" y="120" width="70" height="60"/>
+            <rect x="210" y="120" width="70" height="60"/>
+          </g>
+          <!-- current pixel X -->
+          <rect x="140" y="60" width="70" height="60" fill="#eaf1ff" stroke="#2563eb" stroke-width="2.5"/>
+          <text x="175" y="96" text-anchor="middle" font-size="20" font-weight="800" fill="#1e49b8">X</text>
+
+          <text x="245" y="96" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">7/16</text>
+          <text x="105" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">3/16</text>
+          <text x="175" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">5/16</text>
+          <text x="245" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">1/16</text>
+
+          <!-- arrows from X to neighbours -->
+          <g stroke="#7c3aed" stroke-width="1.8" fill="none" marker-end="url(#arFS)">
+            <path d="M210 90 H236"/>
+            <path d="M155 120 L120 132"/>
+            <path d="M175 120 V132"/>
+            <path d="M195 120 L230 132"/>
+          </g>
+
+          <text x="175" y="40" text-anchor="middle" font-size="12.5" fill="#8a94a6">ô hiện tại X đã lượng tử hoá; sai số err = old - new</text>
+          <text x="175" y="205" text-anchor="middle" font-size="11.5" fill="#8a94a6">phải, dưới-trái, dưới, dưới-phải - đều là ô "chưa duyệt"</text>
+
+          <text x="175" y="245" text-anchor="middle" font-size="12" fill="#4a5568">Thứ tự duyệt: row-major, trái→phải, trên→dưới</text>
+          <path d="M100 265 H250" stroke="#94a3b8" stroke-width="2" marker-end="url(#arFS)"/>
+          <text x="60" y="269" font-size="11" fill="#8a94a6">bắt đầu</text>
+        </g>
+        <defs>
+          <marker id="arFS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Sai số lượng tử hoá tại ô X được rải sang bốn ô lân cận theo tỉ trọng cố định, luôn về phía các ô <em>chưa quét</em> - nhờ vậy sai số không quay lại ảnh hưởng ô đã xử lý.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Thuật ngữ</span>
+      <p><b>Error diffusion</b> - kỹ thuật rải sai số lượng tử hoá sang các mẫu lân cận chưa xử lý để bảo toàn tông trung bình cục bộ. <b>Halftoning</b> - tái hiện sắc độ liên tục bằng mật độ các chấm nhị phân, khái niệm gốc từ in ấn.</p>
+    </div>
+
+    <h2>4. Quét: boustrophedon và gộp run</h2>
+
+    <pre><code>leftToRight = <span class="st">true</span>
+<span class="kw">for</span> each row r:
+    tính công suất cho mọi ô trong dòng
+    tìm firstBurn..lastBurn (<span class="cm"># bỏ qua dòng trắng hoàn toàn, vẫn đảo chiều</span>)
+    duyệt đoạn đó theo chiều hiện tại:
+        gộp một RUN tối đa các ô cùng công suất
+        power &gt; <span class="st">0</span> → nét làm việc (engaged) tới cuối run, ở công suất đó
+        power = <span class="st">0</span> → di chuyển (travel) qua khoảng trống (ô trắng/bị xén)
+    leftToRight = !leftToRight       <span class="cm"># đảo chiều mỗi dòng</span></code></pre>
+
+    <ul>
+      <li><b>Boustrophedon</b> - dòng chạy kiểu "cày ruộng" tới-lui, tránh một chuyến quay đầu về mép cho mỗi dòng quét.</li>
+      <li><b>Run-length merge</b> - gộp các ô liền kề cùng công suất thành <em>một</em> lệnh di chuyển, giảm mạnh số dòng lệnh. Kết hợp với công suất modal (<a href="08-sinh-ma.html">Chương 8 §3</a>), một dải chuyển sắc mượt trở thành vài lệnh mỗi run thay vì một lệnh cho mỗi điểm ảnh.</li>
+      <li>Các khoảng trống (trắng hoặc bị xén) được đi qua ở trạng thái <b>disengaged</b> (rapid), nên vùng bị mặt nạ bỏ qua chứ không bị khắc nhầm.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 700 300" width="700" role="img" aria-label="Quét boustrophedon với các run công suất được gộp">
+        <g font-family="sans-serif">
+          <!-- row 1: left to right -->
+          <text x="20" y="46" font-size="11" fill="#8a94a6">dòng 1 →</text>
+          <rect x="70" y="30" width="60" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="130" y="30" width="120" height="32" fill="#334155"/>
+          <rect x="250" y="30" width="180" height="32" fill="#64748b"/>
+          <rect x="430" y="30" width="90" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="520" y="30" width="80" height="32" fill="#334155"/>
+          <g stroke="#94a3b8" stroke-width="0.6"><path d="M70 30 V62 M600 30 V62"/></g>
+
+          <path d="M70 20 L130 20" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M130 20 L430 20" stroke="#2563eb" stroke-width="3"/>
+          <path d="M430 20 L520 20" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M520 20 L600 20" stroke="#2563eb" stroke-width="3"/>
+
+          <!-- row 2: right to left -->
+          <text x="20" y="110" font-size="11" fill="#8a94a6">dòng 2 ←</text>
+          <rect x="70" y="94" width="90" height="32" fill="#334155"/>
+          <rect x="160" y="94" width="150" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="310" y="94" width="200" height="32" fill="#64748b"/>
+          <rect x="510" y="94" width="90" height="32" fill="#334155"/>
+
+          <path d="M600 84 L510 84" stroke="#2563eb" stroke-width="3"/>
+          <path d="M510 84 L310 84" stroke="#2563eb" stroke-width="3"/>
+          <path d="M310 84 L160 84" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M160 84 L70 84" stroke="#2563eb" stroke-width="3"/>
+
+          <!-- row 3: left to right -->
+          <text x="20" y="174" font-size="11" fill="#8a94a6">dòng 3 →</text>
+          <rect x="70" y="158" width="200" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="270" y="158" width="330" height="32" fill="#475569"/>
+
+          <path d="M70 148 L270 148" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M270 148 L600 148" stroke="#2563eb" stroke-width="3"/>
+
+          <text x="350" y="228" text-anchor="middle" font-size="12" fill="#4a5568">mỗi khối xám = một RUN đã gộp (cùng công suất) → một lệnh nét làm việc</text>
+          <text x="350" y="248" text-anchor="middle" font-size="12" fill="#4a5568">khối nhạt/trong suốt = khoảng trắng/xén → một lệnh di chuyển</text>
+
+          <rect x="130" y="266" width="16" height="16" fill="#334155"/>
+          <text x="152" y="279" font-size="11" fill="#4a5568">công suất cao</text>
+          <rect x="260" y="266" width="16" height="16" fill="#64748b"/>
+          <text x="282" y="279" font-size="11" fill="#4a5568">công suất trung bình</text>
+          <rect x="430" y="266" width="16" height="16" fill="#94a3b8" opacity=".25"/>
+          <text x="452" y="279" font-size="11" fill="#4a5568">trắng/xén (skip)</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc - một lệnh cho cả một run</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Di chuyển - rapid qua vùng skip</span>
+      </div>
+      <figcaption>Ba dòng quét xen kẽ chiều (boustrophedon); mỗi khối màu là một <b>run</b> đã gộp các ô liền kề cùng công suất thành một lệnh duy nhất, thay vì phát một lệnh cho từng điểm ảnh.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Vì sao gộp run quan trọng</span>
+      <p>Không gộp, một ảnh 1000×1000 điểm ảnh có thể sinh ra một triệu lệnh riêng lẻ. Gộp run-length biến một dải chuyển sắc mượt thành một số nhỏ các đoạn công suất không đổi - số lệnh tỉ lệ với <em>số lần đổi công suất</em> trên mỗi dòng, không phải với số điểm ảnh.</p>
+    </div>
+
+    <h2>5. Công suất động (M4) và công suất hằng (M3)</h2>
+    <p>Với raster, ưu tiên <b>chế độ công suất động</b> của bộ điều khiển (GRBL <code>M4</code>) hơn là hằng số (<code>M3</code>): nó co giãn công suất chùm tia theo <em>tốc độ nạp thực tế</em>, giữ mật độ khắc đều xuyên suốt các đoạn tăng/giảm tốc ở hai đầu mỗi dòng. Hình vector thường dùng công suất hằng (<code>M3</code>).</p>
+
+    <div class="kv">
+      <div><dt>M4 - công suất động</dt><dd>Công suất tỉ lệ với tốc độ nạp tức thời. Dùng cho <b>raster</b>: các đoạn đầu/cuối dòng quét chậm hơn (tăng/giảm tốc) vẫn cho mật độ khắc đều, không bị "cháy đậm" ở hai đầu.</dd></div>
+      <div><dt>M3 - công suất hằng</dt><dd>Công suất giữ nguyên bất kể tốc độ. Dùng cho <b>vector</b> (chuỗi): tốc độ trên một đường cắt/vẽ thường đã được kiểm soát riêng, nên công suất không cần bù theo feed rate.</dd></div>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Theo dõi trạng thái modal</span>
+      <p>Cũng như công suất và tốc độ trong Chương 8, chế độ M3/M4 là <b>trạng thái modal</b>: chỉ phát lệnh chuyển chế độ một lần khi chuyển từ đoạn vector sang đoạn raster (hoặc ngược lại), không lặp lại ở mỗi dòng quét.</p>
+    </div>
+
+    <h2>6. Tích hợp với pipeline vector</h2>
+    <p>Raster đi vòng qua chuỗi và sắp xếp, nhưng nó vẫn nằm <b>trong cùng một công việc (job)</b> - đừng để việc "đi vòng" này làm nó rơi khỏi cỗ máy dùng chung:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Biến đổi toạ độ</h4><p>Các điểm raster đi qua <em>cùng</em> phép biến đổi thế giới→máy <code>format()</code> như chuỗi (<a href="08-sinh-ma.html">Chương 8 §5</a>): lấy mẫu trong không gian cục bộ của ảnh, ánh xạ cục bộ→thế giới, rồi để bộ phát mã áp dụng affine của máy (home/mirror/rotate/rotary). Bỏ qua bước này sẽ khiến hình khắc sai vị trí hoặc sai hướng.</p></div>
+      <div class="card"><h4>Sắp xếp theo lớp</h4><p>Trong một lớp, phát các chuỗi vector đã sắp xếp <b>trước</b>, rồi mới đến các hình raster của lớp đó (<a href="12-truong-hop-bien.html">Chương 12 §7</a>); mang theo vị trí hiện tại để dòng raster đầu tiên bắt đầu gần nơi vector vừa kết thúc.</p></div>
+      <div class="card"><h4>Số lượt (passes)</h4><p>Raster tham gia vào số lượt của lớp giống như chuỗi: phát lại toàn bộ lượt quét raster một lần cho mỗi pass.</p></div>
+      <div class="card"><h4>Thiết lập (settings)</h4><p>Raster dùng công suất của lớp làm mức <em>max/on</em> và tốc độ nạp của lớp; min-power/gamma/dither là các điều khiển ảnh riêng của lớp (§3).</p></div>
+    </div>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Lỗi thường gặp</span>
+      <p>Vì raster "tự phát mã", rất dễ vô tình bỏ sót phép biến đổi máy (home/mirror/rotary) mà chuỗi vector luôn đi qua ở Chương 8. Hãy tái sử dụng đúng một hàm <code>format()</code> cho cả hai đường, đừng viết một bản sao riêng cho raster.</p>
+    </div>
+
+    <h2>7. Không animate trong bản xem trước</h2>
+    <p>Raster tạo ra số lượng lệnh di chuyển khổng lồ; đừng đưa chúng vào bộ mô phỏng đường chạy. Thay vào đó, hiển thị raster như một lớp ảnh tĩnh chồng lên bản xem trước. Bộ mô phỏng vector khi đó chỉ animate các chuỗi, giữ giao diện phản hồi nhanh (phát các lệnh raster mà không gán chỉ số mô phỏng nào).</p>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Nguyên tắc chung</span>
+      <p>Bản xem trước cần trung thực về <em>hình dạng</em> đầu ra, không nhất thiết phải mô phỏng <em>từng chuyển động</em>. Với hàng chục nghìn lệnh raster, một ảnh tĩnh chồng lớp truyền tải đúng thông tin với chi phí gần như bằng không.</p>
+    </div>
+
+    <h2>8. Checklist (AI sinh bộ khắc raster)</h2>
+    <ul>
+      <li>Bỏ qua hoàn toàn raster với công cụ không điều biến được (bút/dao).</li>
+      <li>Bước quét = max(interval, một điểm ảnh nguồn); chặn tổng số ô và làm thô nếu cần (kèm ghi chú).</li>
+      <li>Lấy mẫu tại tâm ô trong không gian cục bộ của ảnh; tôn trọng mặt nạ xén.</li>
+      <li>Tông màu: grayscale+gamma vào <code>[minPower, maxPower]</code>, HOẶC dither Floyd&ndash;Steinberg về 1-bit.</li>
+      <li>Quét boustrophedon; gộp các run cùng công suất; nét làm việc qua vùng khắc, di chuyển qua khoảng trống (GRBL <code>G1</code>/<code>G0</code>).</li>
+      <li>Dùng công suất động (M4) để tông đều; theo dõi công suất/tốc độ modal.</li>
+      <li>Giữ raster ngoài bộ mô phỏng có animation.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="08-sinh-ma.html"><div class="dir">← Trước</div><div class="ttl">8 · Sinh mã máy</div></a>
+      <a class="next" href="10-do-muot.html"><div class="dir">Chương tiếp →</div><div class="ttl">10 · Độ mượt &amp; Liên tục đường cong</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

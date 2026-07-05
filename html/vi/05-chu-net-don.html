@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5 · Chữ nét đơn (Centerline) - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 5 · Chữ</span>
+    <h1>Chữ nét đơn (Centerline)</h1>
+    <p class="lead">Chữ vector thông thường là một tập <b>đường viền glyph được tô đặc</b>: chữ "I" thực chất là một hình chữ nhật mỏng có bốn cạnh. Một chiếc bút hay đầu khắc buộc phải vẽ <em>cả hai cạnh</em> của mỗi nét (rồi tô đầy khoảng giữa), vừa chậm vừa trông bị nhân đôi. <b>Chữ nét đơn</b> thay vào đó chỉ vẽ <b>xương / trục trung vị (medial axis)</b> của mỗi nét trong một lần đi duy nhất. Đây chính là hành vi của "font khắc" / "font que" (stick font).</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Có lối tắt: dùng thẳng font nét đơn</span>
+      <p>Nếu bạn có sẵn một <b>font nét đơn thật sự</b> (Hershey / font khắc chuyên dụng), hãy dùng thẳng các nét centerline của nó, không cần trích xuất gì cả. Cả pipeline dưới đây là dành cho trường hợp tổng quát: bạn chỉ có đường viền được tô (bất kỳ font TrueType/OpenType nào, ảnh vector nhập vào, hay hình dạng tuỳ ý). Chương này mô tả cách rút ra một centerline sạch từ một đường viền glyph tô đặc bất kỳ; nó độc lập với font và ngôn ngữ.</p>
+    </div>
+
+    <h2>1. Vấn đề: vì sao cần nét đơn</h2>
+    <p>Hãy nhìn kỹ chữ "I". Với máy point-to-point, "I" tô đặc không phải một nét thẳng: nó là một <em>vòng kín</em> gồm bốn cạnh, và để lấp đầy bên trong máy còn phải quét qua lại nhiều lần. Kết quả là ba nhược điểm cùng lúc: nét trông <b>dày gấp đôi</b> so với ý đồ, thời gian chạy <b>tăng nhiều lần</b>, và với chữ nhỏ thì hai cạnh dính vào nhau thành một khối bết. Trong khi đó, ý nghĩa hình học của "I" chỉ là <em>một đoạn thẳng dọc</em>.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 260" width="560" role="img" aria-label="So sánh chữ I tô đường viền và chữ I nét đơn">
+        <!-- LEFT: filled outline -->
+        <text x="140" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">Đường viền tô (chậm, nhân đôi)</text>
+        <!-- material rectangle of the glyph -->
+        <rect x="108" y="56" width="64" height="150" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- both edges drawn as work strokes -->
+        <path d="M108 56 L108 206 M172 56 L172 206" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- fill scan back-and-forth inside -->
+        <g stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3">
+          <path d="M112 72 H168 M168 90 H112 M112 108 H168 M168 126 H112 M112 144 H168 M168 162 H112 M112 180 H168 M168 198 H112"/>
+        </g>
+        <text x="140" y="232" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">2 cạnh + nhiều dòng tô</text>
+
+        <!-- divider -->
+        <line x1="280" y1="50" x2="280" y2="220" stroke="#dfe5ee" stroke-width="1"/>
+
+        <!-- RIGHT: single stroke centerline -->
+        <text x="420" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">Nét đơn (một trục xương)</text>
+        <!-- ghost of glyph body -->
+        <rect x="388" y="56" width="64" height="150" fill="#faf7f0" stroke="#eadfc8" stroke-dasharray="4 4"/>
+        <!-- single centerline -->
+        <path d="M420 56 L420 206" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="420" cy="56" r="4" fill="#2563eb"/>
+        <circle cx="420" cy="206" r="4" fill="#2563eb"/>
+        <text x="420" y="232" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">1 nét, 1 lần đi</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét làm việc (centerline)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Dòng tô bên trong</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Thân glyph (ink)</span>
+      </div>
+      <figcaption>Cùng một chữ "I": bên trái, đường viền tô buộc bút đi <b>cả hai cạnh</b> rồi lấp giữa; bên phải, centerline là <b>một nét duy nhất</b> chạy dọc theo trục trung vị của nét chữ.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Medial axis / skeleton</span>
+      <p>Trục trung vị (<b>medial axis</b>), còn gọi là <b>skeleton</b> hay xương, là tập các điểm nằm cách đều <em>hai biên gần nhất</em> của một hình. Với một nét chữ có bề rộng đều, medial axis chính là "sợi chỉ" chạy ở giữa nét. Trích được sợi chỉ này ra và vẽ nó một lần chính là mục tiêu của cả chương.</p>
+    </div>
+
+    <h2>2. Khi nào áp dụng</h2>
+    <p>Chế độ nét đơn chỉ được kích hoạt khi cả hai điều kiện sau cùng đúng:</p>
+    <ul>
+      <li>Công việc (hoặc lớp) có bật tuỳ chọn <b>"stroke text" / chữ nét đơn</b>, <b>và</b></li>
+      <li>hình dạng là chữ (hoặc bất kỳ hình nào bạn chủ động muốn skeletonise).</li>
+    </ul>
+    <p>Khi đang bật, nó <b>thay thế</b> chuỗi outline/fill thông thường của hình: thay vì vạch theo biên glyph, hệ thống phát ra các centerline đã trích xuất. Điều này áp dụng bất kể loại công cụ (bút, laser, dao); các hình khác không bị ảnh hưởng.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Vị trí trong pipeline chung</span>
+      <p>Đây là một <em>nguồn sinh chuỗi</em> ở giai đoạn 3 (lập kế hoạch chuỗi) của <a href="01-kien-truc.html">kiến trúc chung</a>. Đầu vào là đường viền glyph đã được làm phẳng (<a href="02-hinh-hoc.html">Ch. 2</a>); đầu ra là các chuỗi centerline trong hệ toạ độ thế giới (mm), sẵn sàng cho bước <a href="07-sap-xep.html">sắp xếp</a> và <a href="08-sinh-ma.html">phát mã</a>.</p>
+    </div>
+
+    <h2>3. Pipeline: skeletonisation trên ảnh raster</h2>
+    <p>Rút medial axis một cách <em>giải tích</em> trực tiếp từ các đường Bézier là bài toán khó và dễ vỡ. Phương pháp bền vững, phổ quát là <b>skeletonisation trên ảnh raster</b>: chuyển glyph thành ảnh bit, làm mỏng ảnh xuống xương một pixel, rồi lần ra polyline. Mười bước dưới đây tạo thành đường ống đầy đủ.</p>
+
+    <figure>
+<pre><code><span class="cm">đường viền (outline path)</span>
+   │  1. rasterise   <span class="cm"># tô glyph thành ảnh bit</span>
+   ▼
+<span class="st">lưới ink 1-bit</span>
+   │  2. thin  (<span class="kw">Zhang–Suen</span>) → xương 1 pixel
+   │  3. prune         <span class="cm"># cắt các nhánh cụt ngắn</span>
+   ▼
+<span class="st">xương sạch</span>
+   │  4. trace         <span class="cm"># xương → polyline</span>
+   │  5. join          <span class="cm"># nối mảnh tại junction (straightest continuation)</span>
+   ▼
+<span class="st">polyline centerline thô (không gian pixel)</span>
+   │  6. smooth   (<span class="kw">moving average</span>)     <span class="cm"># dập bậc thang</span>
+   │  7. simplify (<span class="kw">Douglas–Peucker</span>)     <span class="cm"># bỏ điểm thừa</span>
+   │  8. round    (<span class="kw">Chaikin</span>)             <span class="cm"># làm cong mượt</span>
+   │  9. map back to world mm
+   │ 10. extend terminals   <span class="cm"># kéo dài đầu nét tới biên glyph</span>
+   ▼
+<span class="st">chuỗi centerline (world mm)</span></code></pre>
+      <figcaption>Mười bước của pipeline skeletonisation. Mỗi bước là một thuật toán chuẩn có tên riêng; phần <a href="#buoc">3 (Từng bước)</a> mô tả chi tiết từng bước.</figcaption>
+    </figure>
+
+    <div class="steps">
+      <span class="step">1 · rasterise</span><span class="arrow">→</span>
+      <span class="step">2 · thin</span><span class="arrow">→</span>
+      <span class="step">3 · prune</span><span class="arrow">→</span>
+      <span class="step">4 · trace</span><span class="arrow">→</span>
+      <span class="step">5 · join</span><span class="arrow">→</span>
+      <span class="step">6 · smooth</span><span class="arrow">→</span>
+      <span class="step">7 · simplify</span><span class="arrow">→</span>
+      <span class="step">8 · round</span><span class="arrow">→</span>
+      <span class="step">9 · map mm</span><span class="arrow">→</span>
+      <span class="step">10 · extend</span>
+    </div>
+
+    <h2 id="buoc">4. Từng bước một</h2>
+
+    <h3>4.1 Rasterise (tô glyph thành ảnh bit)</h3>
+    <p>Vẽ đường glyph đã tô vào một ảnh xám / 1-bit. Chọn độ phân giải <code>res</code> (pixel trên mỗi mm) đủ cao để phân giải được nét mỏng nhất (vài px ngang qua nét) nhưng có trần để ảnh không quá lớn (ví dụ cạnh lớn nhất khoảng 2600 px, tối đa khoảng 9 triệu pixel). Tắt khử răng cưa (anti-aliasing) vì ta muốn ranh giới ink/không-ink dứt khoát; tô bằng quy tắc <b>non-zero winding</b> (để các contour chồng lấn hợp nhất thành ink đặc); ngưỡng hoá thành <code>ink = 1</code> / <code>nền = 0</code>. Thêm một viền đệm nhỏ để các pixel ở mép cũng có láng giềng.</p>
+
+    <h3>4.2 Thin - Zhang–Suen</h3>
+    <p>Thuật toán <b>Zhang–Suen thinning</b> kinh điển lặp đi lặp lại việc gỡ bỏ các pixel biên <em>không thiết yếu</em> cho tính liên thông, cho tới khi chỉ còn lại một <b>xương rộng 1 pixel</b>. Mỗi vòng lặp có hai lượt con với mặt nạ xoá bù nhau; nó dùng:</p>
+    <ul>
+      <li><b>B(p)</b> = số láng giềng-8 là ink (phải nằm trong khoảng <b>2–6</b> mới được xoá),</li>
+      <li><b>A(p)</b> = số lần chuyển 0→1 khi đi vòng quanh vành 8 láng giềng (phải <b>đúng bằng 1</b>),</li>
+      <li>hai tích điều kiện góc, khác nhau giữa hai lượt con.</li>
+    </ul>
+    <p>Lặp lại tới khi không pixel nào thay đổi (có chốt chặn số vòng lặp tối đa). Từ khoá: <em>Zhang–Suen thinning / skeletonisation hình thái (morphological)</em>.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 240" width="560" role="img" aria-label="Zhang–Suen làm mỏng vùng ink dày thành xương một pixel">
+        <!-- LEFT: thick ink grid -->
+        <text x="120" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">Vùng ink dày</text>
+        <g>
+          <!-- pixel grid background -->
+          <g stroke="#e6ded0" stroke-width="1">
+            <!-- draw a small grid of ink pixels forming an L-ish blob -->
+          </g>
+          <!-- ink pixels -->
+          <g fill="#d9cdb4" stroke="#c9b89a" stroke-width="0.6">
+            <rect x="60" y="60" width="16" height="16"/><rect x="76" y="60" width="16" height="16"/><rect x="92" y="60" width="16" height="16"/>
+            <rect x="60" y="76" width="16" height="16"/><rect x="76" y="76" width="16" height="16"/><rect x="92" y="76" width="16" height="16"/>
+            <rect x="60" y="92" width="16" height="16"/><rect x="76" y="92" width="16" height="16"/><rect x="92" y="92" width="16" height="16"/>
+            <rect x="60" y="108" width="16" height="16"/><rect x="76" y="108" width="16" height="16"/><rect x="92" y="108" width="16" height="16"/>
+            <rect x="108" y="92" width="16" height="16"/><rect x="124" y="92" width="16" height="16"/><rect x="140" y="92" width="16" height="16"/>
+            <rect x="108" y="76" width="16" height="16"/><rect x="124" y="76" width="16" height="16"/>
+            <rect x="108" y="108" width="16" height="16"/><rect x="124" y="108" width="16" height="16"/><rect x="140" y="108" width="16" height="16"/>
+            <rect x="60" y="124" width="16" height="16"/><rect x="76" y="124" width="16" height="16"/><rect x="92" y="124" width="16" height="16"/>
+          </g>
+        </g>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2">
+          <path d="M230 100 h60" marker-end="url(#arZ)"/>
+        </g>
+        <text x="260" y="90" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif">thin</text>
+
+        <!-- RIGHT: 1px skeleton -->
+        <text x="420" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb" font-family="sans-serif">Xương 1 pixel</text>
+        <!-- faint ghost of ink -->
+        <g fill="#faf7f0" stroke="#eadfc8" stroke-width="0.6">
+          <rect x="350" y="60" width="16" height="80"/>
+          <rect x="366" y="60" width="48" height="80"/>
+          <rect x="414" y="76" width="48" height="48"/>
+        </g>
+        <!-- skeleton as thin polyline through centers -->
+        <path d="M368 68 L368 132 M368 100 L452 100" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="368" cy="68" r="3.5" fill="#2563eb"/>
+        <circle cx="368" cy="132" r="3.5" fill="#2563eb"/>
+        <circle cx="452" cy="100" r="3.5" fill="#2563eb"/>
+        <circle cx="368" cy="100" r="3.5" fill="#7c3aed"/>
+
+        <defs>
+          <marker id="arZ" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><span class="dot" style="background:#d9cdb4;border-color:#c9b89a"></span> Pixel ink</span>
+        <span><i style="border-color:#2563eb"></i> Xương (centerline)</span>
+        <span><span class="dot" style="background:#7c3aed;border-radius:50%"></span> Junction</span>
+      </div>
+      <figcaption>Zhang–Suen gỡ dần các pixel biên không thiết yếu, biến vùng ink dày thành một xương rộng đúng một pixel giữ nguyên tính liên thông. Điểm tím là một <b>junction</b> (ngã ba).</figcaption>
+    </figure>
+
+    <h3>4.3 Prune spurs (cắt nhánh cụt)</h3>
+    <p>Việc làm mỏng đẻ ra những "cành con" cụt ngắn tại serif, đầu nét và các junction, khiến centerline trông xù xì. Hãy <b>prune</b> (tỉa) mỗi nhánh chạy từ một <b>endpoint</b> (1 láng giềng) vào một <b>junction</b> (&gt;2 láng giềng) trong phạm vi <code>maxSpur</code> pixel: xoá cành con, giữ junction. Đặt <code>maxSpur</code> cao hơn một chút so với nửa bề rộng nét điển hình (khoảng <b>0.7 mm</b> quy ra pixel) để các nét thật (dài hơn nhiều) sống sót còn các mẩu nhiễu thì biến mất. Chạy vài lượt.</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Đừng cắt cả một nét</span>
+      <p><b>Không</b> prune một nhánh chạy giữa <em>hai endpoint thật</em>: đó là cả một nét (như chữ "l"), không phải spur. Chỉ nhánh nào một đầu là endpoint còn đầu kia là junction, và đủ ngắn, mới là ứng viên bị tỉa.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 560 250" width="560" role="img" aria-label="Prune cắt nhánh cụt ngắn ở serif, giữ nét dài">
+        <text x="130" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">Trước prune (xù xì)</text>
+        <!-- main long stroke (letter l) -->
+        <path d="M120 56 L120 200" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- spurs at bottom serif -->
+        <path d="M120 200 L96 214" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M120 200 L146 214" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- spur near top -->
+        <path d="M120 70 L104 60" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="120" cy="56" r="3.5" fill="#2563eb"/>
+        <circle cx="120" cy="200" r="3.5" fill="#7c3aed"/>
+        <circle cx="96" cy="214" r="3" fill="#dc2626"/>
+        <circle cx="146" cy="214" r="3" fill="#dc2626"/>
+        <circle cx="104" cy="60" r="3" fill="#dc2626"/>
+        <text x="176" y="214" font-size="10.5" fill="#dc2626" font-family="sans-serif">spur &lt; maxSpur</text>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2"><path d="M250 128 h60" marker-end="url(#arP)"/></g>
+        <text x="280" y="118" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">prune</text>
+
+        <text x="420" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">Sau prune (sạch)</text>
+        <path d="M420 56 L420 200" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="420" cy="56" r="3.5" fill="#2563eb"/>
+        <circle cx="420" cy="200" r="3.5" fill="#2563eb"/>
+        <text x="420" y="224" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">nét "l" còn nguyên</text>
+
+        <defs>
+          <marker id="arP" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Nét thật (giữ)</span>
+        <span><i style="border-color:#dc2626"></i> Spur (cắt)</span>
+        <span><span class="dot" style="background:#7c3aed;border-radius:50%"></span> Junction</span>
+      </div>
+      <figcaption>Các nhánh cụt đỏ tại serif ngắn hơn <code>maxSpur</code> nên bị cắt; nét dọc dài của chữ "l" chạy giữa hai endpoint thật nên được giữ nguyên vẹn.</figcaption>
+    </figure>
+
+    <h3>4.4 Trace (xương → polyline)</h3>
+    <p>Đi dọc theo xương 1 pixel để lần ra các polyline. Bắt đầu từ mỗi <b>node</b> (endpoint hoặc junction) và bám theo các đoạn chạy có đúng 2 láng giềng, đánh dấu mỗi cạnh vô hướng dùng nhiều nhất một lần; sau đó dọn nốt các <b>vòng thuần</b> (ring không có node nào, như chữ "O"). Kết quả: nhiều polyline ngắn trong không gian pixel.</p>
+
+    <h3>4.5 Join tại junction (straightest continuation)</h3>
+    <p>Trace thô bị vụn (mỗi junction làm đứt mạch). Hãy nối lại các mảnh gặp nhau tại một endpoint chung theo <b>straightest continuation</b> (đường nối thẳng nhất): tại một junction, kéo dài chuỗi vào đúng mảnh có hướng khớp nhất với hướng đang đi tới (tích vô hướng - dot product - lớn nhất, đòi hỏi góc quay <b>&lt; 90°</b>). Việc này biến một mớ mảnh rời thành vài nét chảy liền, kéo theo <em>ít lần nhấc bút hơn nhiều</em> và các đường chạy mượt xuyên qua junction.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 250" width="560" role="img" aria-label="Nối mảnh theo đường thẳng nhất tại junction">
+        <!-- a junction where an incoming stroke meets three candidates -->
+        <!-- incoming direction from left -->
+        <text x="280" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">Tại junction: chọn mảnh thẳng hàng nhất</text>
+
+        <!-- junction node -->
+        <circle cx="280" cy="130" r="5" fill="#7c3aed"/>
+        <text x="280" y="118" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif">junction</text>
+
+        <!-- incoming chain (from left, horizontal) -->
+        <path d="M70 130 L275 130" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <text x="120" y="150" font-size="11" fill="#2563eb" font-family="sans-serif">hướng tới →</text>
+
+        <!-- candidate A: straight continuation (chosen) -->
+        <path d="M285 130 L490 122" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <text x="440" y="112" font-size="11" fill="#16a34a" font-family="sans-serif" font-weight="700">chọn (dot lớn nhất)</text>
+
+        <!-- candidate B: sharp turn up (rejected) -->
+        <path d="M283 126 L330 50" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"/>
+        <text x="340" y="52" font-size="10.5" fill="#dc2626" font-family="sans-serif">bỏ (góc &gt; 90°)</text>
+
+        <!-- candidate C: sharp turn down (rejected) -->
+        <path d="M283 134 L330 210" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"/>
+        <text x="340" y="212" font-size="10.5" fill="#dc2626" font-family="sans-serif">bỏ (rẽ gắt)</text>
+
+        <!-- angle hint arc -->
+        <path d="M300 130 A20 20 0 0 0 296 118" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Chuỗi đang đi tới</span>
+        <span><i style="border-color:#16a34a"></i> Mảnh được nối</span>
+        <span><i style="border-color:#dc2626;border-top-style:dashed"></i> Mảnh bị bỏ</span>
+      </div>
+      <figcaption>Chuỗi đi tới junction sẽ nối vào mảnh có hướng khớp nhất (tích vô hướng lớn nhất, góc quay &lt; 90°). Các mảnh rẽ gắt bị để lại cho một chuỗi khác, nhờ đó nét chảy liền qua ngã ba.</figcaption>
+    </figure>
+
+    <h3>4.6 Smooth - moving average</h3>
+    <p>Xương thô có độ rung "bậc thang" ±1 px. Áp một bộ lọc thông thấp <b>moving average</b> (ví dụ nhân chập với kernel <code>[1,2,1]/4</code>) vài lần. Ghim (pin) các endpoint của polyline mở (không cho chúng dịch chuyển); với vòng kín thì cuộn vòng (wrap). Từ khoá: <em>làm mượt Laplacian / box smoothing</em>.</p>
+
+    <h3>4.7 Simplify - Douglas–Peucker</h3>
+    <p>Giảm số điểm bằng thuật toán <b>Ramer–Douglas–Peucker</b> ở một dung sai nhỏ (dung sai càng mịn thì các đường cong tròn càng được giữ). Nó loại các đỉnh thẳng hàng / gần thẳng hàng mà không làm đổi hình dạng.</p>
+
+    <h3>4.8 Round - Chaikin</h3>
+    <p>Áp <b>Chaikin corner-cutting</b> (cắt góc, 1–2 vòng lặp) để biến polyline đã đơn giản hoá thành một đường cong mượt. Mỗi vòng lặp thay mỗi góc bằng hai điểm ở vị trí 1/4 và 3/4 dọc theo các cạnh của nó. Từ khoá: <em>Chaikin subdivision</em>. Xem thêm về liên tục đường cong ở <a href="10-do-muot.html">Ch. 10</a>.</p>
+
+    <h3>4.9 Map to world space (đưa về mm)</h3>
+    <p>Chuyển toạ độ pixel trở lại mm thế giới bằng nghịch đảo của phép biến đổi rasterise (tính đến phần đệm và <code>res</code>).</p>
+
+    <h3>4.10 Extend terminals (kéo dài đầu nét)</h3>
+    <p>Medial axis dừng lại <em>hụt khoảng nửa bề rộng nét</em> so với đầu mút thị giác của nét. Đây chính là lỗi "đầu nét bị hụt" hay còn gọi là <b>mất nét</b>. Cách sửa: kéo dài mỗi endpoint là <b>terminal thật</b> ra phía ngoài dọc theo tiếp tuyến của nó, cho tới khi chạm biên glyph:</p>
+    <ul>
+      <li>Một <b>terminal</b> là endpoint mà <em>không</em> nét nào khác chạm tới trong phạm vi <b>share tolerance</b> (khoảng <b>0.35 mm</b>, xem §5). Một endpoint nằm trong dung sai đó của một polyline khác là một <b>junction</b>: hãy để yên (kéo dài sẽ đâm lố vào trong glyph). Vòng kín không có terminal nào.</li>
+      <li>Ước lượng tiếp tuyến từ một đoạn lùi ngắn dọc theo nét, rồi bước ra ngoài theo từng bước nhỏ chừng nào điểm còn nằm trong glyph đã tô, tới một mức kéo dài tối đa.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 560 260" width="560" role="img" aria-label="Kéo dài đầu nét true terminal ra tới biên glyph, sửa lỗi mất nét">
+        <!-- LEFT: missing tip -->
+        <text x="140" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">Trước: mất nét</text>
+        <!-- glyph body ghost (a vertical stroke) -->
+        <rect x="118" y="50" width="44" height="170" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- centerline stops short at both ends -->
+        <path d="M140 82 L140 188" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- gaps shown -->
+        <path d="M140 82 L140 62" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3"/>
+        <path d="M140 188 L140 208" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3"/>
+        <circle cx="140" cy="82" r="3.5" fill="#dc2626"/>
+        <circle cx="140" cy="188" r="3.5" fill="#dc2626"/>
+        <text x="196" y="70" font-size="10.5" fill="#dc2626" font-family="sans-serif">hụt ~½ bề rộng</text>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2"><path d="M250 135 h60" marker-end="url(#arE)"/></g>
+        <text x="280" y="125" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">extend</text>
+
+        <!-- RIGHT: extended -->
+        <text x="420" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">Sau: kéo dài tới biên</text>
+        <rect x="398" y="50" width="44" height="170" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <path d="M420 82 L420 188" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- extensions along tangent to boundary -->
+        <path d="M420 82 L420 58" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <path d="M420 188 L420 212" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="420" cy="58" r="3.5" fill="#16a34a"/>
+        <circle cx="420" cy="212" r="3.5" fill="#16a34a"/>
+        <text x="452" y="60" font-size="10.5" fill="#16a34a" font-family="sans-serif">chạm biên</text>
+
+        <defs>
+          <marker id="arE" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Centerline gốc</span>
+        <span><i style="border-color:#16a34a"></i> Phần kéo dài</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Thân glyph</span>
+        <span><i style="border-color:#dc2626;border-top-style:dashed"></i> Khoảng hụt</span>
+      </div>
+      <figcaption>Trục xương dừng hụt khoảng nửa bề rộng nét (lỗi <b>mất nét</b>). Ta kéo dài mỗi <em>true terminal</em> theo tiếp tuyến ra tới biên glyph. Ở junction thì <b>không</b> kéo dài, vì đầu nét đã được nét khác chia sẻ.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Cảnh báo về độ bền: chọn share tolerance cho khéo</span>
+      <p>Giữ share tolerance <em>nhỏ hơn hẳn</em> khe hẹp nhất giữa các nét phân biệt. Nếu không, các glyph (hay serif) chạm/chồng nhau sẽ khiến một true terminal bị nhầm thành junction (gây <b>mất nét</b>) hoặc ngược lại (gây gai đâm lố - overshoot spike). Với các glyph tự chạm chính nó, trần kéo dài tối đa (§5) chặn được việc một phần kéo dài đi sai bước chạy quá xa dọc theo phần trong ngoài ý muốn.</p>
+    </div>
+
+    <h2>5. Ngưỡng cleanup (kèm lý do)</h2>
+    <p>Mỗi tham số điều chỉnh được đều có một lý do; hiểu lý do thì mới tinh chỉnh lại thông minh được.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Tham số</th><th>Giá trị điển hình</th><th>Lý do</th></tr></thead>
+      <tbody>
+        <tr><td><code>res</code> (px/mm)</td><td>chọn sao cho <b>nét mỏng nhất ≥ ~4–8 px</b> (2 chỉ là sàn cứng), có trần theo kích thước ảnh tối đa</td><td>raster quá thô làm mất nét mỏng; quá mịn thì ảnh phình to</td></tr>
+        <tr><td><code>maxSpur</code></td><td>~0.7 mm</td><td>chỉ hơn nửa bề rộng nét: cắt serif, giữ nét</td></tr>
+        <tr><td>độ dài nét tối thiểu</td><td>~0.6 mm</td><td>bỏ các mẩu vụn / vòng tí hon</td></tr>
+        <tr><td>dung sai DP</td><td>~0.045·res px (≥0.7 px)</td><td>nhỏ ⇒ đường cong giữ được độ tròn</td></tr>
+        <tr><td>số vòng Chaikin</td><td>2</td><td>đủ mượt mà không co rút quá tay</td></tr>
+        <tr><td>share tol terminal/junction</td><td>~0.35 mm</td><td>endpoint gần hơn mức này = junction chung (không kéo dài); xa hơn = terminal tự do</td></tr>
+        <tr><td>kéo dài terminal tối đa</td><td>~2.2 mm</td><td>đủ chạm biên mà không đâm lố</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Độ phân giải với chữ nhỏ</span>
+      <p><code>res</code> được chọn <em>theo từng glyph</em> để nét mỏng nhất có đủ pixel. Chữ nhỏ (chiều cao thân ≲ 4–5 mm) cần <code>res</code> <b>cao</b> (hàng chục px/mm), hoặc tốt hơn là dùng font nét đơn thật (§1). Độ mượt tính theo mm được DP + Chaikin bảo toàn bất kể <code>res</code>; thứ mà raster quá thô làm mất là <b>độ trung thực</b> (centerline có khớp với glyph hay không).</p>
+    </div>
+
+    <h2>6. Vì sao lại theo thứ tự này</h2>
+    <p>Làm mỏng trước (topology), rồi prune (bỏ nhiễu), rồi trace (trích xuất), rồi join (nối), <em>sau đó</em> mới làm mượt hình học (dáng vẻ), và kéo dài terminal ở <b>bước cuối cùng</b> (vì nó cần các tiếp tuyến đã hoàn thiện và quan hệ "đây có phải junction chung không?" giữa các polyline đã hoàn chỉnh). Đảo thứ tự sẽ phá vỡ các giả định: ví dụ nếu làm mượt <em>trước</em> khi prune, ta sẽ làm nhoè chính những spur mà ta muốn phát hiện và cắt.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Nguyên tắc: topology trước, hình học sau, quan hệ cuối</span>
+      <p>Ba tầng công việc phải xếp đúng chỗ. Tầng <b>topology</b> (mỏng, prune, trace, join) quyết định "có bao nhiêu nét và nối ra sao"; tầng <b>hình học</b> (smooth, simplify, round) quyết định "trông mượt cỡ nào"; tầng <b>quan hệ</b> (extend terminals) cần tất cả các nét đã xong mới phân biệt được terminal với junction.</p>
+    </div>
+
+    <h2>7. Checklist (AI sinh chữ centerline)</h2>
+    <ol>
+      <li>Rasterise glyph đã tô (fill non-zero, không AA, có đệm, giới hạn kích thước).</li>
+      <li>Zhang–Suen làm mỏng xuống xương 1 px.</li>
+      <li>Prune các spur vào junction (vài lượt).</li>
+      <li>Trace node → polyline; dọn nốt các vòng; mỗi cạnh dùng một lần.</li>
+      <li>Join các mảnh theo straightest continuation (góc quay &lt; 90°).</li>
+      <li>Smooth (moving average) → Douglas–Peucker → Chaikin.</li>
+      <li>Map trở lại mm thế giới.</li>
+      <li>Kéo dài các <em>true terminal</em> ra tới biên; để yên các junction.</li>
+      <li>Trả về các chuỗi trong không gian thế giới; chúng thay thế outline/fill của glyph.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Kết quả: chữ đẹp bằng một nét</span>
+      <p>Khi làm đúng chuỗi mười bước, một glyph tô đặc bất kỳ trở thành vài chuỗi centerline chảy mượt, mỗi nét đi một lần, đầu nét chạm đúng biên. Đầu ra hoà vào cùng dòng chảy với mọi nguồn khác: sắp xếp giảm di chuyển ở <a href="07-sap-xep.html">Ch. 7</a>, rồi phát mã ở <a href="08-sinh-ma.html">Ch. 8</a>. Chi phí thời gian giảm mạnh vì ta bỏ hẳn các dòng tô, đúng như mô hình chi phí ở <a href="11-hieu-nang.html">Ch. 11</a>.</p>
+    </div>
+
+    <div class="pager">
+      <a href="04-duong-vien.html"><div class="dir">← Trước</div><div class="ttl">4 · Đường viền &amp; Contour</div></a>
+      <a class="next" href="06-hoa-van.html"><div class="dir">Chương tiếp →</div><div class="ttl">6 · Hoa văn &amp; Tô bóng</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

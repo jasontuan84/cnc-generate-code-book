@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>1 · Kiến trúc &amp; Pipeline - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 1 · Kiến trúc</span>
+    <h1>Kiến trúc &amp; Pipeline</h1>
+    <p class="lead">Chương 0 đã cho ta biết đích đến: mọi bản vẽ đều rút gọn về một tập <b>chuỗi điểm</b>. Chương này trả lời câu hỏi kế tiếp: hệ thống nào sinh ra tập chuỗi đó một cách có tổ chức, để thêm một máy mới hay một thuật toán tô mới không làm sập cả toà nhà? Câu trả lời là một kiến trúc phân lớp nghiêm ngặt, với năm giai đoạn nối tiếp và bốn hợp đồng ranh giới không được phá vỡ.</p>
+
+    <h2>1. Mô hình trách nhiệm phân lớp</h2>
+    <p>Hãy hình dung toàn bộ hệ thống như một đường ống có bốn khối chức năng, đi từ không gian <b>WORLD</b> (thiết kế, đơn vị mm mà người dùng nhìn thấy) đến không gian <b>DEVICE</b> (máy, đơn vị mà bộ điều khiển hiểu). Mỗi khối chỉ biết đúng những gì nó cần biết, không hơn:</p>
+
+    <figure>
+      <svg viewBox="0 0 760 260" width="760" role="img" aria-label="Bốn khối trách nhiệm: Document, Geometry, Toolpath, Emitter">
+        <g font-family="sans-serif">
+          <text x="20" y="30" font-size="12" fill="#8a94a6" font-weight="700">◀ WORLD (thiết kế)</text>
+          <line x1="20" y1="40" x2="550" y2="40" stroke="#b9d4ff" stroke-width="3"/>
+          <text x="590" y="30" font-size="12" fill="#16a34a" font-weight="700">DEVICE (máy) ▶</text>
+          <line x1="590" y1="40" x2="740" y2="40" stroke="#b7e3c2" stroke-width="3"/>
+
+          <rect x="20" y="70" width="150" height="92" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="95" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#1e49b8">Document</text>
+          <text x="95" y="118" text-anchor="middle" font-size="11" fill="#4a5568">shapes, styles,</text>
+          <text x="95" y="133" text-anchor="middle" font-size="11" fill="#4a5568">layers</text>
+          <text x="95" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"cái gì cần vẽ"</text>
+
+          <rect x="210" y="70" width="150" height="92" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="285" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#1e49b8">Geometry</text>
+          <text x="285" y="118" text-anchor="middle" font-size="11" fill="#4a5568">chains</text>
+          <text x="285" y="133" text-anchor="middle" font-size="11" fill="#4a5568">(world mm)</text>
+          <text x="285" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"VẼ nó ra sao"</text>
+
+          <rect x="400" y="70" width="150" height="92" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="475" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#6b3fb8">Toolpath</text>
+          <text x="475" y="118" text-anchor="middle" font-size="11" fill="#4a5568">chuỗi có thứ tự</text>
+          <text x="475" y="133" text-anchor="middle" font-size="11" fill="#4a5568">+ trạng thái tool</text>
+          <text x="475" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"THỨ TỰ nào"</text>
+
+          <rect x="590" y="70" width="150" height="92" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="665" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#9be59b">Emitter</text>
+          <text x="665" y="118" text-anchor="middle" font-size="11" fill="#d6e2ff">văn bản dialect</text>
+          <text x="665" y="133" text-anchor="middle" font-size="11" fill="#d6e2ff">(GRBL/HPGL…)</text>
+          <text x="665" y="152" text-anchor="middle" font-size="10" fill="#6b86b8">"NGÔN NGỮ nào"</text>
+
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M170 116 h34" marker-end="url(#arA)"/>
+            <path d="M360 116 h34" marker-end="url(#arA)"/>
+            <path d="M550 116 h34" marker-end="url(#arA)"/>
+          </g>
+
+          <text x="187" y="200" text-anchor="middle" font-size="10" fill="#4a5568">chỉ nhận shape</text>
+          <text x="187" y="213" text-anchor="middle" font-size="10" fill="#4a5568">đã resolve style</text>
+          <text x="377" y="200" text-anchor="middle" font-size="10" fill="#4a5568">chỉ nhận</text>
+          <text x="377" y="213" text-anchor="middle" font-size="10" fill="#4a5568">chain thô</text>
+          <text x="567" y="200" text-anchor="middle" font-size="10" fill="#4a5568">chỉ nhận chuỗi</text>
+          <text x="567" y="213" text-anchor="middle" font-size="10" fill="#4a5568">có thứ tự sẵn</text>
+
+          <text x="380" y="245" text-anchor="middle" font-size="11" fill="#8a94a6" font-style="italic">Mỗi mũi tên là một hợp đồng: bên nhận không được biết nhiều hơn những gì hợp đồng trao.</text>
+        </g>
+        <defs>
+          <marker id="arA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Bốn khối, bốn hợp đồng. <b>Document → Geometry</b>: nhận shape đã resolve, không biết gì về layer/UI. <b>Geometry → Toolpath</b>: chỉ trao <em>chain</em> (danh sách điểm world-space), không biết gì về máy hay thứ tự. <b>Toolpath → Emitter</b>: trao chuỗi <em>đã sắp xếp</em> kèm trạng thái công cụ (ăn/nhả), không biết cú pháp lệnh. <b>Emitter → Device</b>: giai đoạn duy nhất biết dialect cụ thể.</figcaption>
+    </figure>
+
+    <p>Đặc điểm quan trọng nhất của mô hình này là tính <b>đơn hướng</b>: thông tin chỉ chảy từ trái sang phải, và mỗi khối không "nhìn ngược" lại khối trước để biết thêm chi tiết. Geometry không cần biết shape nằm trên layer nào; Toolpath không cần biết máy là GRBL hay HPGL; Emitter không cần biết fill rule là gì, vì đến lúc nó nhận dữ liệu, mọi quyết định hình học đã chốt xong.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Bài kiểm tra tính đúng đắn của lớp</span>
+      <p>Nếu bạn <b>không thể viết unit test</b> cho một giai đoạn mà không phải khởi tạo một dialect máy cụ thể, thì lớp kiến trúc đã bị rò rỉ. Một hàm tính hoa văn tô mà đọc <code>machine.type == "grbl"</code> đâu đó bên trong là một dấu hiệu cảnh báo rõ ràng.</p>
+    </div>
+
+    <h2>2. Giai đoạn 1  - Phân giải hình học</h2>
+    <p>Mục tiêu của giai đoạn đầu tiên là biến "một shape với một transform và một style" thành <b>đường viền ở không gian thế giới</b>, cùng với hiểu biết vùng nào là bên trong. Ba việc phải làm, theo đúng thứ tự:</p>
+
+    <div class="cards">
+      <div class="card"><h4>1 · Bake transform</h4><p>Ghép transform cục bộ của shape với transform của mọi tổ tiên (group/layer), rồi áp lên outline cục bộ để ra một path ở world space. Xoay, co giãn, xén (shear) phải được bake <em>trước khi</em> làm phẳng, để dung sai được đo bằng đơn vị thế giới, không phải đơn vị cục bộ đã méo.</p></div>
+      <div class="card"><h4>2 · Chọn fill rule</h4><p><b>even-odd</b> hay <b>non-zero winding</b>. Even-odd là mặc định an toàn: "lỗ là bất kỳ đâu subpath chồng lên nhau một số lẻ lần"  - nó không phụ thuộc hướng vẽ của subpath. Chi tiết ở <a href="02-hinh-hoc.html">Ch. 2</a>.</p></div>
+      <div class="card"><h4>3 · Phân loại vai trò hình học</h4><p>Shape này thuộc vai trò nào trong ba vai trò ở §5 dưới đây  - điều này quyết định toàn bộ nhánh xử lý phía sau.</p></div>
+    </div>
+
+    <p>Kết quả đầu ra của giai đoạn này là một path đã resolve ở toạ độ thế giới, cùng style của nó: có fill không? có stroke không? hoa văn nào? mức xám/độ đậm nào?</p>
+
+    <h2>3. Giai đoạn 2  - Trích xuất nguyên thuỷ</h2>
+    <p>Mục tiêu là chuyển các đường cong liên tục thành polyline, và tách hình học thành hai thứ mà mọi giai đoạn phía sau sẽ tiêu thụ:</p>
+
+    <div class="kv">
+      <div><dt>Outline geometry</dt><dd>Chính các polyline biên  - cạnh/đường viền của shape.</dd></div>
+      <div><dt>Interior area</dt><dd>Vùng khép kín bên trong, dùng cho các bộ tô (fill) và hoa văn (pattern).</dd></div>
+    </div>
+
+    <p>Thao tác then chốt ở đây là <b>làm phẳng đường cong</b> (curve flattening) tại một dung sai được kiểm soát (xem <a href="02-hinh-hoc.html">Ch. 2 §1</a>). Mọi giai đoạn phía sau chỉ thao tác trên polyline, không bao giờ trên đường cong tham số  - nên giai đoạn này tập trung toàn bộ phần toán học về đường cong vào một nơi duy nhất, thay vì rải rác khắp hệ thống.</p>
+
+    <h2>4. Giai đoạn 3  - Lập kế hoạch chuỗi (phần dispatch)</h2>
+    <p>Với mỗi shape đã resolve, hệ thống phải quyết định <em>nguồn chuỗi nào</em> áp dụng  - hoàn toàn dựa trên hình học và style của shape đó, không dựa vào bất kỳ "chế độ máy" nào. Đây là một phép dispatch theo style, độc lập với máy:</p>
+
+    <pre><span class="kw">for</span> <span class="fn">each</span> shape <span class="kw">in</span> draw_order:
+    <span class="kw">if</span> shape <span class="kw">is</span> raster_image:
+        <span class="cm">→ đường RASTER (điều biến dòng quét)   # ch. 9; KHÔNG phải chain</span>
+        <span class="kw">continue</span>
+
+    <span class="kw">if</span> single_stroke_text <span class="kw">and</span> shape <span class="kw">is</span> text:
+        <span class="cm">→ chuỗi CENTERLINE                     # ch. 5</span>
+        <span class="kw">continue</span>
+
+    <span class="kw">if</span> shape.has_fill:                        <span class="cm"># che phủ phần bên trong</span>
+        <span class="kw">if</span> fill_is_pattern <span class="kw">and</span> tiling_produced_strokes:
+            <span class="cm">→ chuỗi PATTERN (lát + xén)          # ch. 6</span>
+        <span class="kw">elif</span> fill_is_solid:
+            <span class="cm">→ chuỗi FILL-ENGINE (auto strategy)  # ch. 3</span>
+        <span class="kw">else</span>:  <span class="cm"># dáng hatch có sẵn, hoặc texture không sinh gì</span>
+            <span class="cm">→ chuỗi HATCH theo góc của pattern    # ch. 3/6</span>
+
+    <span class="kw">if</span> shape.has_stroke <span class="kw">or</span> <span class="kw">not</span> shape.has_fill: <span class="cm"># vẽ đường biên</span>
+        <span class="cm">→ chuỗi OUTLINE                          # ch. 4</span></pre>
+
+    <p>Toàn bộ quyết định gói gọn trong đoạn mã trên. Điều quan trọng cần nhớ: đây là logic <b>cộng dồn (additive)</b>, không phải loại trừ lẫn nhau (exclusive)  - hai khối <code>if</code> cuối cùng đều có thể đúng cùng lúc cho một shape.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 610" width="760" role="img" aria-label="Cây quyết định phân nhánh theo style của shape">
+        <defs>
+          <marker id="arB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+          <marker id="arBg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#16a34a"/>
+          </marker>
+        </defs>
+        <g font-family="sans-serif">
+          <rect x="300" y="10" width="160" height="42" rx="8" fill="#eef2f8" stroke="#dfe5ee"/>
+          <text x="380" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Shape kế tiếp</text>
+
+          <path d="M380 52 v18" stroke="#94a3b8" stroke-width="2" marker-end="url(#arB)"/>
+          <polygon points="380,70 470,110 380,150 290,110" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="380" y="105" text-anchor="middle" font-size="11.5" fill="#1a2230">Là ảnh</text>
+          <text x="380" y="120" text-anchor="middle" font-size="11.5" fill="#1a2230">raster?</text>
+
+          <path d="M470 110 h60" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="500" y="102" font-size="10.5" fill="#16a34a" font-weight="700">có</text>
+          <rect x="532" y="86" width="200" height="48" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="632" y="106" text-anchor="middle" font-size="12" font-weight="700" fill="#6b3fb8">RASTER</text>
+          <text x="632" y="122" text-anchor="middle" font-size="10.5" fill="#6b3fb8">điều biến dòng quét (ch. 9)</text>
+
+          <text x="365" y="168" font-size="10.5" fill="#8a94a6" text-anchor="end">không</text>
+          <path d="M380 150 v28" stroke="#94a3b8" stroke-width="2" marker-end="url(#arB)"/>
+
+          <polygon points="380,178 495,225 380,272 265,225" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="380" y="220" text-anchor="middle" font-size="11" fill="#1a2230">Single-stroke text</text>
+          <text x="380" y="235" text-anchor="middle" font-size="11" fill="#1a2230">bật &amp; là text?</text>
+
+          <path d="M495 225 h55" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="520" y="217" font-size="10.5" fill="#16a34a" font-weight="700">có</text>
+          <rect x="552" y="201" width="180" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="642" y="221" text-anchor="middle" font-size="12" font-weight="700" fill="#1e49b8">CENTERLINE</text>
+          <text x="642" y="237" text-anchor="middle" font-size="10.5" fill="#1e49b8">chuỗi trục xương (ch. 5)</text>
+
+          <text x="365" y="290" font-size="10.5" fill="#8a94a6" text-anchor="end">không</text>
+          <path d="M380 272 v30" stroke="#94a3b8" stroke-width="2"/>
+          <text x="380" y="318" text-anchor="middle" font-size="10.5" fill="#8a94a6" font-style="italic">hai kiểm tra dưới đây độc lập, cộng dồn</text>
+          <path d="M380 322 v10" stroke="#94a3b8" stroke-width="1.6"/>
+          <path d="M380 332 L200 355" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arB)"/>
+          <path d="M380 332 L560 355" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arB)"/>
+
+          <polygon points="200,358 280,395 200,432 120,395" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="200" y="399" text-anchor="middle" font-size="12" fill="#1a2230">CÓ FILL?</text>
+
+          <path d="M200 432 v20" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="212" y="450" font-size="10.5" fill="#16a34a" font-weight="700">có</text>
+          <path d="M200 468 h0" stroke="none"/>
+          <path d="M200 460 l-95 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+          <path d="M200 460 l0 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+          <path d="M200 460 l95 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+
+          <rect x="15" y="498" width="130" height="48" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="80" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#6b3fb8">PATTERN</text>
+          <text x="80" y="533" text-anchor="middle" font-size="9.5" fill="#6b3fb8">hoa văn tạo nét (ch. 6)</text>
+
+          <rect x="155" y="498" width="130" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="220" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1e49b8">FILL-ENGINE</text>
+          <text x="220" y="533" text-anchor="middle" font-size="9.5" fill="#1e49b8">tô đặc, auto (ch. 3)</text>
+
+          <rect x="295" y="498" width="130" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="360" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1e49b8">HATCH</text>
+          <text x="360" y="533" text-anchor="middle" font-size="9.5" fill="#1e49b8">dáng có sẵn (ch. 3/6)</text>
+
+          <text x="88" y="465" font-size="10" fill="#8a94a6" text-anchor="end">không</text>
+          <path d="M200 432 q150 60 220 100" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arB)"/>
+
+          <polygon points="560,358 650,395 560,432 470,395" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="560" y="390" text-anchor="middle" font-size="10.5" fill="#1a2230">CÓ STROKE hoặc</text>
+          <text x="560" y="404" text-anchor="middle" font-size="10.5" fill="#1a2230">KHÔNG FILL?</text>
+
+          <path d="M560 432 v30" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="573" y="450" font-size="10.5" fill="#16a34a" font-weight="700">có</text>
+          <rect x="490" y="468" width="140" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="560" y="488" text-anchor="middle" font-size="11" font-weight="700" fill="#1e49b8">OUTLINE</text>
+          <text x="560" y="503" text-anchor="middle" font-size="9.5" fill="#1e49b8">chuỗi biên (ch. 4)</text>
+
+          <text x="645" y="450" font-size="10" fill="#8a94a6">không</text>
+          <path d="M620 400 q120 60 -20 190" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arB)"/>
+
+          <rect x="220" y="562" width="320" height="40" rx="8" fill="#eef2f8" stroke="#dfe5ee"/>
+          <text x="380" y="587" text-anchor="middle" font-size="11" fill="#1a2230">Chuỗi cuối = (chain tô nếu có) + (chain viền nếu có)</text>
+          <path d="M80 546 v10 q0 10 30 10 h270" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M220 522 q0 30 60 40" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M360 522 q0 25 20 40" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M560 516 q0 30 -100 46" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+        </g>
+      </svg>
+      <figcaption>Cây dispatch: raster và centerline là hai <b>ngoại lệ thay thế</b> hoàn toàn nhánh thường; fill và stroke ở dưới là <b>hai kiểm tra độc lập, cộng dồn</b>  - một shape có cả fill lẫn stroke sẽ đi qua cả hai và phát ra cả hai loại chuỗi.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Ba trường hợp cộng dồn cần phân biệt</span>
+      <p><b>Shape có fill và có stroke:</b> phát ra <em>cả</em> chuỗi tô <em>lẫn</em> chuỗi viền  - phần bên trong được che phủ và đường biên được vẽ riêng (các quyết định về thứ tự/thiết lập/cạnh dùng chung, xem <a href="04-duong-vien.html">Ch. 4 §2b</a>).</p>
+      <p><b>Shape có fill, không stroke:</b> chỉ phát chuỗi tô  - thiết kế không yêu cầu đường viền nên không tự bịa ra. Lưu ý: <em>không phải</em> vì "vùng tô chạm tới biên"  - các bộ tô dựa trên inset thường để lại một rìa mỏng chưa tô, xem <a href="04-duong-vien.html">Ch. 4 §2</a>.</p>
+      <p><b>Shape không có fill</b> (path hở, chỉ có stroke, hoặc không có gì): chỉ phát chuỗi viền  - không có phần bên trong nên đường biên chính là toàn bộ tác phẩm.</p>
+    </div>
+
+    <p>Thứ tự dispatch cũng mã hoá hai ngoại lệ ghi đè: chữ nét đơn (single-stroke text) <em>thay thế</em> hoàn toàn cách xử lý outline/fill thông thường của một shape text (<a href="05-chu-net-don.html">Ch. 5</a>); và raster được xử lý hoàn toàn tách biệt vì nó không dựa trên chain.</p>
+
+    <h2>5. Ba vai trò hình học</h2>
+    <p>Mọi shape rơi vào đúng một trong ba <b>vai trò hình học</b>. Tìm ra toolpath tốt nhất cho mỗi vai trò chính là toàn bộ công việc của các giai đoạn 3-5:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Vai trò</th><th>Nhận diện</th><th>Chuỗi sinh ra</th><th>Chiến lược tối ưu</th></tr></thead>
+      <tbody>
+        <tr><td><b>Filled</b> (được tô)</td><td>có fill hợp lệ</td><td>chuỗi tô/hoa văn (+ viền nếu có stroke)</td><td>bộ tô chọn đường phủ tối ưu thời gian theo hình dạng vùng (<a href="03-thuat-toan-to.html">Ch. 3</a>)</td></tr>
+        <tr><td><b>Stroked</b> (viền)</td><td>có stroke, hoặc không có fill</td><td>chuỗi viền</td><td>làm phẳng biên → chuỗi; sắp xếp để tối thiểu di chuyển (<a href="04-duong-vien.html">Ch. 4</a>, <a href="07-sap-xep.html">Ch. 7</a>)</td></tr>
+        <tr><td><b>Text</b> (nét đơn)</td><td>là text + tuỳ chọn bật</td><td>chuỗi centerline</td><td>trích xuất khung xương để mỗi glyph là một nét đi (<a href="05-chu-net-don.html">Ch. 5</a>)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 700 220" width="700" role="img" aria-label="Ba vai trò hình học: Filled, Stroked, Text">
+        <g font-family="sans-serif">
+          <rect x="20" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="120" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Filled</text>
+          <circle cx="120" cy="115" r="55" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+          <g stroke="#2563eb" stroke-width="2">
+            <line x1="75" y1="90" x2="165" y2="90"/>
+            <line x1="70" y1="105" x2="170" y2="105"/>
+            <line x1="67" y1="120" x2="173" y2="120"/>
+            <line x1="70" y1="135" x2="170" y2="135"/>
+            <line x1="75" y1="150" x2="165" y2="150"/>
+          </g>
+          <text x="120" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">chuỗi tô che phủ vùng trong</text>
+
+          <rect x="250" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="350" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Stroked</text>
+          <path d="M300 150 L 320 90 Q 350 60 380 90 L 400 150" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="300" cy="150" r="4" fill="#2563eb"/><circle cx="400" cy="150" r="4" fill="#2563eb"/>
+          <text x="350" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">chuỗi viền là toàn bộ tác phẩm</text>
+
+          <rect x="480" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="580" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Text (nét đơn)</text>
+          <text x="580" y="140" text-anchor="middle" font-size="90" font-weight="800" fill="#f3ede1" stroke="#d9cdb4" font-family="sans-serif">A</text>
+          <path d="M552 148 L580 68 L608 148 M563 118 h34" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <text x="580" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">chuỗi centerline: 1 glyph = 1 nét</text>
+        </g>
+      </svg>
+      <figcaption>Ba vai trò loại trừ lẫn nhau <b>cho một chiến lược sinh chuỗi</b>: vùng đặc dùng bộ tô, biên dùng đường viền, chữ nét đơn dùng khung xương. Một shape filled-và-stroked chỉ là vai trò Filled cộng thêm chuỗi viền, không phải vai trò thứ tư.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Không có nhánh "cắt hay vẽ"</span>
+      <p>Kiến trúc này <b>không</b> có một nhánh rẽ riêng cho "máy cắt" so với "máy vẽ". Dispatch chỉ phụ thuộc vào hình học <em>là gì</em> (fill / stroke / không có gì), nên cùng một logic sinh ra đúng chuỗi cho bất kỳ máy point-to-point nào. Các tinh chỉnh riêng cho công cụ cắt (overcut, bù kerf) là hậu xử lý tuỳ chọn trên chuỗi đã chọn sẵn (<a href="04-duong-vien.html">Ch. 4 §4</a>), không phải một pipeline riêng.</p>
+    </div>
+
+    <h2>6. Giai đoạn 4  - Sắp xếp chuỗi</h2>
+    <p>Nhận danh sách chuỗi chưa có thứ tự từ giai đoạn 3 và sinh ra một thứ tự cùng hướng đi cho mỗi chuỗi sao cho quãng di chuyển pen-up là nhỏ nhất. Chi tiết ở <a href="07-sap-xep.html">Ch. 7</a>. Giai đoạn này là <b>hình học thuần tuý</b>: nó không bao giờ phát ra một lệnh máy nào.</p>
+
+    <p>Việc sắp xếp được thực hiện <b>theo từng layer / từng nhóm công cụ</b>, vì các layer khác nhau mang thiết lập máy khác nhau (công suất, tốc độ, lực, số lượt) và phải được phát ra thành các khối liên tục, không xen kẽ.</p>
+
+    <h2>7. Giai đoạn 5  - Phát mã dialect</h2>
+    <p>Tuần tự hoá các chuỗi đã sắp xếp thành lệnh máy. Đây là giai đoạn duy nhất biết đến dialect. Nó có bốn trách nhiệm:</p>
+
+    <div class="steps">
+      <span class="step">Preamble (đơn vị, absolute mode, khởi động tool, home)</span>
+      <span class="arrow">→</span>
+      <span class="step">Theo dõi trạng thái modal (ăn/nhả, công suất, feed)</span>
+      <span class="arrow">→</span>
+      <span class="step">Biến đổi hệ toạ độ (góc home, mirror, xoay, wrap trục quay)</span>
+      <span class="arrow">→</span>
+      <span class="step">Postamble (nhả tool, về home, kết thúc)</span>
+    </div>
+
+    <p>Việc theo dõi trạng thái modal đảm bảo lệnh trùng lặp không bao giờ được phát ra  - nếu công suất laser đã ở mức 800 rồi thì không cần gửi lại lệnh đặt công suất 800 cho từng đoạn. Chi tiết đầy đủ ở <a href="08-sinh-ma.html">Ch. 8</a>.</p>
+
+    <h2>8. Bốn không gian toạ độ</h2>
+    <p>Lỗi thường tụ lại ở các ranh giới không gian toạ độ. Vì vậy phải đặt tên tường minh cho cả bốn không gian, không được lẫn lộn:</p>
+
+    <div class="kv">
+      <div><dt>1 · Local space</dt><dd>Toạ độ riêng của một shape, trước khi áp transform của nó.</dd></div>
+      <div><dt>2 · World / design space</dt><dd>Sau khi bake mọi transform; một mặt phẳng mm chung với gốc toạ độ và hướng trục xác định (thường +X phải, +Y xuống như không gian màn hình). <b>Mọi</b> việc sinh chuỗi diễn ra ở đây.</dd></div>
+      <div><dt>3 · Machine space</dt><dd>Hệ toạ độ của thiết bị: gốc tại góc home của máy, hướng trục theo phần cứng, có thể bị mirror hoặc xoay so với world space.</dd></div>
+      <div><dt>4 · Device units</dt><dd>Machine space đã co giãn về đơn vị số nguyên/thập phân của bộ điều khiển (ví dụ mm cho GRBL; 1/40 mm "đơn vị plotter" cho HPGL cơ bản).</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 760 260" width="760" role="img" aria-label="Bốn không gian toạ độ và phép biến đổi giữa chúng">
+        <defs>
+          <marker id="arC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+        <g font-family="sans-serif">
+          <rect x="10" y="6" width="380" height="180" rx="10" fill="none" stroke="#b9d4ff" stroke-width="1.4" stroke-dasharray="3 4"/>
+          <text x="200" y="200" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">hình học / thứ tự  - chỉ trong Geometry &amp; Toolpath</text>
+
+          <rect x="600" y="6" width="150" height="180" rx="10" fill="none" stroke="#b7e3c2" stroke-width="1.4" stroke-dasharray="3 4"/>
+          <text x="675" y="200" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">chỉ trong Emitter</text>
+
+          <g>
+            <rect x="30" y="30" width="140" height="110" rx="8" fill="#fdfbf6" stroke="#e6ded0"/>
+            <text x="100" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a2230">1. Local</text>
+            <path d="M45 120 h30 M45 120 v-30" stroke="#c7cfdc" stroke-width="1.4"/>
+            <path d="M75 60 l20 45 20 -20 20 30" fill="none" stroke="#94a3b8" stroke-width="2"/>
+            <text x="100" y="133" text-anchor="middle" font-size="9.5" fill="#8a94a6">toạ độ riêng shape</text>
+          </g>
+
+          <path d="M170 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="185" y="78" text-anchor="middle" font-size="8.5" fill="#4a5568">bake</text>
+
+          <g>
+            <rect x="200" y="30" width="150" height="110" rx="8" fill="#fdfbf6" stroke="#e6ded0"/>
+            <text x="275" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a2230">2. World (mm)</text>
+            <path d="M215 120 h30 M215 120 v-30" stroke="#c7cfdc" stroke-width="1.4"/>
+            <path d="M235 100 l25 -35 25 15 20 -25" fill="none" stroke="#2563eb" stroke-width="2.2"/>
+            <text x="275" y="133" text-anchor="middle" font-size="9.5" fill="#8a94a6">mọi chain sinh ở đây</text>
+          </g>
+
+          <path d="M350 85 q20 0 20 -6" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="392" y="60" text-anchor="middle" font-size="8.5" fill="#4a5568">affine: dịch/</text>
+          <text x="392" y="72" text-anchor="middle" font-size="8.5" fill="#4a5568">mirror/xoay</text>
+          <text x="392" y="84" text-anchor="middle" font-size="8.5" fill="#4a5568">(chỉ ở emitter)</text>
+
+          <g>
+            <rect x="420" y="30" width="150" height="110" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+            <text x="495" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#166534">3. Machine</text>
+            <path d="M435 50 h30 M435 50 v30" stroke="#9fd4ac" stroke-width="1.4"/>
+            <path d="M455 60 l25 35 25 -15 20 25" fill="none" stroke="#16a34a" stroke-width="2.2"/>
+            <text x="495" y="133" text-anchor="middle" font-size="9.5" fill="#4a7c59">gốc tại home máy</text>
+          </g>
+
+          <path d="M570 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="585" y="78" text-anchor="middle" font-size="8.5" fill="#4a5568">scale</text>
+
+          <g>
+            <rect x="618" y="30" width="120" height="110" rx="8" fill="#0f1729" stroke="#1c2b4a"/>
+            <text x="678" y="48" text-anchor="middle" font-size="11" font-weight="700" fill="#9be59b">4. Device</text>
+            <text x="678" y="63" text-anchor="middle" font-size="9.5" fill="#d6e2ff">units</text>
+            <text x="678" y="100" text-anchor="middle" font-size="17" font-family="monospace" fill="#9be59b">X120.4</text>
+            <text x="678" y="118" text-anchor="middle" font-size="17" font-family="monospace" fill="#9be59b">Y88.0</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Chain được sinh và sắp xếp <b>hoàn toàn</b> ở World space. Phép biến đổi world → machine (một affine map nhỏ) chỉ áp dụng <b>trong emitter</b>, từng điểm một, đúng một lần  - nhờ vậy bản xem trước luôn hiển thị world space trong khi máy nhận machine space.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Quy tắc</span>
+      <p>Sinh và sắp xếp chuỗi hoàn toàn ở world space. Chuyển sang machine space + device units <b>đúng một lần</b>, cho mỗi điểm, tại thời điểm phát mã. Giữ các lệnh di chuyển-về-home ở toạ độ machine thô, để "home" luôn là gốc thiết bị thật, không bị lẫn qua phép biến đổi world.</p>
+    </div>
+
+    <h2>9. Đồng nhất giữa xem trước và mô phỏng</h2>
+    <p>Nếu sản phẩm hiển thị một toolpath mô phỏng, hãy lái bộ mô phỏng bằng <b>chính danh sách chuỗi đã sắp xếp</b> mà emitter tiêu thụ, gắn nhãn mỗi bước di chuyển là ăn hay di chuyển. Điều này đảm bảo "cái bạn xem trước chính là cái máy sẽ làm". Giữ hình học mô phỏng ở world space (người dùng đọc được) và chỉ để văn bản đã phát mã mang phép biến đổi máy  - không bao giờ duy trì hai đường tính toán path độc lập nhau.</p>
+
+    <h2>10. Các bất biến về độ bền vững</h2>
+    <p>Ba nguyên tắc sau áp dụng cho mọi giai đoạn sinh chuỗi, bất kể thuật toán cụ thể là gì:</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Không bao giờ phát ra "không có gì" cho một vùng không rỗng</span>
+      <p>Mọi chiến lược lập kế hoạch phải có một phương án dự phòng lùi về một phương pháp đúng đơn giản  - thà xấu còn hơn trống rỗng.</p>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Bỏ qua nguồn không tương thích một cách nhẹ nhàng</span>
+      <p>Một máy dao bỏ qua âm thầm ảnh raster; một máy bút bỏ qua điều biến công suất. Đừng báo lỗi  - chỉ đơn giản là bỏ qua (omit).</p>
+    </div>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Công việc bị chặn trên (bounded work)</span>
+      <p>Mọi bộ sinh phải giới hạn đầu ra của nó (số ring tối đa, số site tối đa, số ô raster tối đa, ngưỡng cắt của tối ưu hoá sắp xếp), để một khoảng cách nhỏ trên một vùng khổng lồ không thể treo máy hay ngốn hết bộ nhớ. Khi một ngưỡng buộc phải làm thô kết quả, hãy ghi lại điều đó thành một chú thích dễ đọc cho con người.</p>
+    </div>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Kiến trúc là bộ khung, phần còn lại là nội dung</span>
+      <p>Chương này cho bạn bộ khung: bốn khối, năm giai đoạn, bốn không gian toạ độ, ba bất biến bền vững. Các chương tiếp theo sẽ lấp đầy từng ô của bộ khung này  - bắt đầu từ nền tảng hình học (làm phẳng đường cong, fill rule, offset) ở <a href="02-hinh-hoc.html">Chương 2</a>.</p>
+    </div>
+
+    <div class="pager">
+      <a href="00-gioi-thieu.html">
+        <div class="dir">← Trước</div>
+        <div class="ttl">0 · Ý tưởng cốt lõi: mô hình Chuỗi</div>
+      </a>
+      <a class="next" href="02-hinh-hoc.html">
+        <div class="dir">Chương tiếp →</div>
+        <div class="ttl">2 · Nền tảng hình học</div>
+      </a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

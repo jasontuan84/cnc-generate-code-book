@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>5 · Single-Stroke (Centerline) Text - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 5 · Text</span>
+    <h1>Single-Stroke (Centerline) Text</h1>
+    <p class="lead">Normal vector text is a set of <b>filled glyph outlines</b>: the letter "I" is really a thin rectangle with four sides. A pen or engraving head asked to reproduce it must draw <em>both edges</em> of every stroke (and then fill the gap between them) - slow, and it looks doubled. <b>Single-stroke text</b> instead draws each glyph's <b>skeleton / medial axis</b> - the centerline of every stroke - in a single pass. This is the "engraving font" / "stick font" behaviour.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">There is a shortcut: use a real single-line font</span>
+      <p>If you already have a genuine <b>single-line font</b> (Hershey / a dedicated engraving font), use its centerline strokes directly - no extraction needed. The pipeline below is for the general case where you only have filled outlines (any TrueType/OpenType font, imported vector artwork, or an arbitrary shape). This chapter describes how to derive a clean centerline from any filled glyph outline; it is font- and language-independent.</p>
+    </div>
+
+    <h2>1. The problem: why single-stroke is needed</h2>
+    <p>Look closely at the letter "I". On a point-to-point machine, a filled "I" is not a single straight stroke: it is a <em>closed loop</em> of four edges, and filling the interior means the machine sweeps back and forth many times. The result is three drawbacks at once: the stroke looks <b>twice as thick</b> as intended, run time <b>multiplies</b>, and at small sizes the two edges merge into a single blobby mass. Yet the geometric meaning of "I" is only <em>a single vertical segment</em>.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 260" width="560" role="img" aria-label="Comparing a filled-outline I with a single-stroke I">
+        <!-- LEFT: filled outline -->
+        <text x="140" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">Filled outline (slow, doubled)</text>
+        <!-- material rectangle of the glyph -->
+        <rect x="108" y="56" width="64" height="150" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- both edges drawn as work strokes -->
+        <path d="M108 56 L108 206 M172 56 L172 206" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- fill scan back-and-forth inside -->
+        <g stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3">
+          <path d="M112 72 H168 M168 90 H112 M112 108 H168 M168 126 H112 M112 144 H168 M168 162 H112 M112 180 H168 M168 198 H112"/>
+        </g>
+        <text x="140" y="232" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">2 edges + many fill lines</text>
+
+        <!-- divider -->
+        <line x1="280" y1="50" x2="280" y2="220" stroke="#dfe5ee" stroke-width="1"/>
+
+        <!-- RIGHT: single stroke centerline -->
+        <text x="420" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">Single-stroke (one skeleton axis)</text>
+        <!-- ghost of glyph body -->
+        <rect x="388" y="56" width="64" height="150" fill="#faf7f0" stroke="#eadfc8" stroke-dasharray="4 4"/>
+        <!-- single centerline -->
+        <path d="M420 56 L420 206" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="420" cy="56" r="4" fill="#2563eb"/>
+        <circle cx="420" cy="206" r="4" fill="#2563eb"/>
+        <text x="420" y="232" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">1 stroke, 1 pass</text>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Working stroke (centerline)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Interior fill line</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Glyph body (ink)</span>
+      </div>
+      <figcaption>The same letter "I": on the left, the filled outline forces the tool to trace <b>both edges</b> and then fill the gap; on the right, the centerline is <b>a single stroke</b> running along the medial axis of the letterform.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Medial axis / skeleton</span>
+      <p>The <b>medial axis</b>, also called the <b>skeleton</b>, is the set of points equidistant from the <em>two nearest boundaries</em> of a shape. For a stroke of even width, the medial axis is the "thread" running down its middle. Extracting that thread and drawing it once is the whole goal of this chapter.</p>
+    </div>
+
+    <h2>2. When it applies</h2>
+    <p>Single-stroke mode is activated only when both of the following are true:</p>
+    <ul>
+      <li>The job (or the layer) has the <b>"stroke text"</b> option enabled, <b>and</b></li>
+      <li>the shape is text (or any shape you choose to skeletonise).</li>
+    </ul>
+    <p>When active, it <b>replaces</b> the shape's normal outline/fill chains: instead of tracing the glyph boundary, the system emits the extracted centerlines. This applies regardless of tool type (pen, laser, blade); other shapes are unaffected.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Where this sits in the overall pipeline</span>
+      <p>This is a <em>chain source</em> at stage 3 (plan chains) of the <a href="01-architecture.html">overall architecture</a>. The input is a flattened glyph outline (<a href="02-geometry.html">Ch. 2</a>); the output is centerline chains in world coordinates (mm), ready for <a href="07-toolpath-ordering.html">ordering</a> and <a href="08-machine-code.html">code emission</a>.</p>
+    </div>
+
+    <h2>3. Pipeline: raster skeletonisation</h2>
+    <p>Deriving the medial axis <em>analytically</em> straight from Bézier curves is hard and brittle. The robust, universal method is <b>raster-based skeletonisation</b>: rasterise the glyph into a bitmap, thin it down to a one-pixel skeleton, then trace the skeleton into polylines. The ten steps below form the complete pipeline.</p>
+
+    <figure>
+<pre><code><span class="cm">outline path</span>
+   │  1. rasterise   <span class="cm"># fill glyphs to a bitmap</span>
+   ▼
+<span class="st">1-bit ink grid</span>
+   │  2. thin  (<span class="kw">Zhang–Suen</span>) → 1-pixel skeleton
+   │  3. prune         <span class="cm"># remove short spurs</span>
+   ▼
+<span class="st">clean skeleton</span>
+   │  4. trace         <span class="cm"># skeleton → polylines</span>
+   │  5. join          <span class="cm"># merge fragments at junctions (straightest continuation)</span>
+   ▼
+<span class="st">raw centerline polylines (pixel space)</span>
+   │  6. smooth   (<span class="kw">moving average</span>)     <span class="cm"># kill staircase wobble</span>
+   │  7. simplify (<span class="kw">Douglas–Peucker</span>)     <span class="cm"># drop redundant points</span>
+   │  8. round    (<span class="kw">Chaikin</span>)             <span class="cm"># smooth the curve</span>
+   │  9. map back to world mm
+   │ 10. extend terminals   <span class="cm"># reach terminals out to the glyph boundary</span>
+   ▼
+<span class="st">centerline chains (world mm)</span></code></pre>
+      <figcaption>The ten steps of the skeletonisation pipeline. Each step is a standard named algorithm; the <a href="#steps">step-by-step section</a> below details each one.</figcaption>
+    </figure>
+
+    <div class="steps">
+      <span class="step">1 · rasterise</span><span class="arrow">→</span>
+      <span class="step">2 · thin</span><span class="arrow">→</span>
+      <span class="step">3 · prune</span><span class="arrow">→</span>
+      <span class="step">4 · trace</span><span class="arrow">→</span>
+      <span class="step">5 · join</span><span class="arrow">→</span>
+      <span class="step">6 · smooth</span><span class="arrow">→</span>
+      <span class="step">7 · simplify</span><span class="arrow">→</span>
+      <span class="step">8 · round</span><span class="arrow">→</span>
+      <span class="step">9 · map mm</span><span class="arrow">→</span>
+      <span class="step">10 · extend</span>
+    </div>
+
+    <h2 id="steps">4. Step by step</h2>
+
+    <h3>4.1 Rasterise (fill the glyph into a bitmap)</h3>
+    <p>Render the filled glyph path into a grayscale / 1-bit bitmap. Choose a resolution <code>res</code> (pixels per mm) high enough to resolve the thinnest stroke (a few px across) but capped so the bitmap does not balloon (e.g. max dimension around 2600 px, at most about 9 million pixels). Disable anti-aliasing, since we want a crisp ink/no-ink boundary; fill using the <b>non-zero winding</b> rule (so overlapping contours merge into solid ink); threshold to <code>ink = 1</code> / <code>background = 0</code>. Add a small padding border so edge pixels also have neighbours.</p>
+
+    <h3>4.2 Thin - Zhang–Suen</h3>
+    <p>The classic <b>Zhang–Suen thinning</b> algorithm iteratively removes boundary pixels that are <em>not essential</em> to connectivity, until only a <b>1-pixel-wide skeleton</b> remains. Each iteration has two complementary sub-passes with different deletion masks; it uses:</p>
+    <ul>
+      <li><b>B(p)</b> = the number of 8-neighbours that are ink (must lie in the range <b>2-6</b> to be deleted),</li>
+      <li><b>A(p)</b> = the number of 0→1 transitions going around the 8-ring (must be <b>exactly 1</b>),</li>
+      <li>two corner-condition products, which differ between the two sub-passes.</li>
+    </ul>
+    <p>Repeat until no pixel changes (guarded by a max-iteration cap). Keywords: <em>Zhang–Suen thinning / morphological skeletonisation</em>.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 240" width="560" role="img" aria-label="Zhang–Suen thinning a thick ink blob into a one-pixel skeleton">
+        <!-- LEFT: thick ink grid -->
+        <text x="120" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">Thick ink region</text>
+        <g>
+          <!-- pixel grid background -->
+          <g stroke="#e6ded0" stroke-width="1">
+            <!-- draw a small grid of ink pixels forming an L-ish blob -->
+          </g>
+          <!-- ink pixels -->
+          <g fill="#d9cdb4" stroke="#c9b89a" stroke-width="0.6">
+            <rect x="60" y="60" width="16" height="16"/><rect x="76" y="60" width="16" height="16"/><rect x="92" y="60" width="16" height="16"/>
+            <rect x="60" y="76" width="16" height="16"/><rect x="76" y="76" width="16" height="16"/><rect x="92" y="76" width="16" height="16"/>
+            <rect x="60" y="92" width="16" height="16"/><rect x="76" y="92" width="16" height="16"/><rect x="92" y="92" width="16" height="16"/>
+            <rect x="60" y="108" width="16" height="16"/><rect x="76" y="108" width="16" height="16"/><rect x="92" y="108" width="16" height="16"/>
+            <rect x="108" y="92" width="16" height="16"/><rect x="124" y="92" width="16" height="16"/><rect x="140" y="92" width="16" height="16"/>
+            <rect x="108" y="76" width="16" height="16"/><rect x="124" y="76" width="16" height="16"/>
+            <rect x="108" y="108" width="16" height="16"/><rect x="124" y="108" width="16" height="16"/><rect x="140" y="108" width="16" height="16"/>
+            <rect x="60" y="124" width="16" height="16"/><rect x="76" y="124" width="16" height="16"/><rect x="92" y="124" width="16" height="16"/>
+          </g>
+        </g>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2">
+          <path d="M230 100 h60" marker-end="url(#arZ)"/>
+        </g>
+        <text x="260" y="90" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif">thin</text>
+
+        <!-- RIGHT: 1px skeleton -->
+        <text x="420" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#2563eb" font-family="sans-serif">1-pixel skeleton</text>
+        <!-- faint ghost of ink -->
+        <g fill="#faf7f0" stroke="#eadfc8" stroke-width="0.6">
+          <rect x="350" y="60" width="16" height="80"/>
+          <rect x="366" y="60" width="48" height="80"/>
+          <rect x="414" y="76" width="48" height="48"/>
+        </g>
+        <!-- skeleton as thin polyline through centers -->
+        <path d="M368 68 L368 132 M368 100 L452 100" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        <circle cx="368" cy="68" r="3.5" fill="#2563eb"/>
+        <circle cx="368" cy="132" r="3.5" fill="#2563eb"/>
+        <circle cx="452" cy="100" r="3.5" fill="#2563eb"/>
+        <circle cx="368" cy="100" r="3.5" fill="#7c3aed"/>
+
+        <defs>
+          <marker id="arZ" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><span class="dot" style="background:#d9cdb4;border-color:#c9b89a"></span> Ink pixel</span>
+        <span><i style="border-color:#2563eb"></i> Skeleton (centerline)</span>
+        <span><span class="dot" style="background:#7c3aed;border-radius:50%"></span> Junction</span>
+      </div>
+      <figcaption>Zhang–Suen progressively removes non-essential boundary pixels, turning a thick ink region into a skeleton exactly one pixel wide while preserving connectivity. The purple point is a <b>junction</b> (a branch point).</figcaption>
+    </figure>
+
+    <h3>4.3 Prune spurs</h3>
+    <p>Thinning spawns short dead-end "twigs" at serifs, stroke terminals, and junctions, making the centerline look hairy. <b>Prune</b> each branch that runs from an <b>endpoint</b> (1 neighbour) into a <b>junction</b> (&gt;2 neighbours) within <code>maxSpur</code> pixels: delete the twig, keep the junction. Set <code>maxSpur</code> a little above a typical stroke half-width (about <b>0.7 mm</b> converted to pixels) so real strokes (much longer) survive while noise artefacts vanish. Run a few passes.</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Do not prune an entire stroke</span>
+      <p><b>Never</b> prune a branch that runs between <em>two genuine endpoints</em>: that is a whole stroke (like the letter "l"), not a spur. Only a branch with one endpoint end and one junction end, short enough, is a pruning candidate.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 560 250" width="560" role="img" aria-label="Pruning removes short spurs at serifs while keeping long strokes">
+        <text x="130" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">Before prune (hairy)</text>
+        <!-- main long stroke (letter l) -->
+        <path d="M120 56 L120 200" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- spurs at bottom serif -->
+        <path d="M120 200 L96 214" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="M120 200 L146 214" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <!-- spur near top -->
+        <path d="M120 70 L104 60" stroke="#dc2626" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="120" cy="56" r="3.5" fill="#2563eb"/>
+        <circle cx="120" cy="200" r="3.5" fill="#7c3aed"/>
+        <circle cx="96" cy="214" r="3" fill="#dc2626"/>
+        <circle cx="146" cy="214" r="3" fill="#dc2626"/>
+        <circle cx="104" cy="60" r="3" fill="#dc2626"/>
+        <text x="176" y="214" font-size="10.5" fill="#dc2626" font-family="sans-serif">spur &lt; maxSpur</text>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2"><path d="M250 128 h60" marker-end="url(#arP)"/></g>
+        <text x="280" y="118" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">prune</text>
+
+        <text x="420" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">After prune (clean)</text>
+        <path d="M420 56 L420 200" stroke="#2563eb" stroke-width="2.6" stroke-linecap="round"/>
+        <circle cx="420" cy="56" r="3.5" fill="#2563eb"/>
+        <circle cx="420" cy="200" r="3.5" fill="#2563eb"/>
+        <text x="420" y="224" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">the "l" stroke stays whole</text>
+
+        <defs>
+          <marker id="arP" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Real stroke (kept)</span>
+        <span><i style="border-color:#dc2626"></i> Spur (removed)</span>
+        <span><span class="dot" style="background:#7c3aed;border-radius:50%"></span> Junction</span>
+      </div>
+      <figcaption>The red twigs at the serifs are shorter than <code>maxSpur</code> so they are removed; the long vertical stroke of the letter "l" runs between two genuine endpoints, so it is kept intact.</figcaption>
+    </figure>
+
+    <h3>4.4 Trace (skeleton → polylines)</h3>
+    <p>Walk along the 1-pixel skeleton to trace out polylines. Start from every <b>node</b> (endpoint or junction) and follow the runs with exactly 2 neighbours, marking each undirected edge used at most once; then mop up the remaining <b>pure loops</b> (rings with no node, like the letter "O"). Result: many short polylines in pixel space.</p>
+
+    <h3>4.5 Join at junctions (straightest continuation)</h3>
+    <p>The raw trace is fragmented (every junction breaks the chain). Rejoin fragments meeting at a shared endpoint using <b>straightest continuation</b>: at a junction, extend the chain into whichever fragment's direction best matches the incoming direction (maximum dot product, requiring a turn of <b>&lt; 90°</b>). This turns a scribble of disjoint fragments into a few flowing strokes, giving <em>far fewer pen lifts</em> and smooth runs through junctions.</p>
+
+    <figure>
+      <svg viewBox="0 0 560 250" width="560" role="img" aria-label="Joining fragments by the straightest continuation at a junction">
+        <!-- a junction where an incoming stroke meets three candidates -->
+        <!-- incoming direction from left -->
+        <text x="280" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#4a5568" font-family="sans-serif">At a junction: pick the best-aligned fragment</text>
+
+        <!-- junction node -->
+        <circle cx="280" cy="130" r="5" fill="#7c3aed"/>
+        <text x="280" y="118" text-anchor="middle" font-size="11" fill="#7c3aed" font-family="sans-serif">junction</text>
+
+        <!-- incoming chain (from left, horizontal) -->
+        <path d="M70 130 L275 130" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <text x="120" y="150" font-size="11" fill="#2563eb" font-family="sans-serif">incoming direction →</text>
+
+        <!-- candidate A: straight continuation (chosen) -->
+        <path d="M285 130 L490 122" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <text x="440" y="112" font-size="11" fill="#16a34a" font-family="sans-serif" font-weight="700">chosen (max dot)</text>
+
+        <!-- candidate B: sharp turn up (rejected) -->
+        <path d="M283 126 L330 50" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"/>
+        <text x="340" y="52" font-size="10.5" fill="#dc2626" font-family="sans-serif">rejected (turn &gt; 90°)</text>
+
+        <!-- candidate C: sharp turn down (rejected) -->
+        <path d="M283 134 L330 210" stroke="#dc2626" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="5 4"/>
+        <text x="340" y="212" font-size="10.5" fill="#dc2626" font-family="sans-serif">rejected (sharp turn)</text>
+
+        <!-- angle hint arc -->
+        <path d="M300 130 A20 20 0 0 0 296 118" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Incoming chain</span>
+        <span><i style="border-color:#16a34a"></i> Joined fragment</span>
+        <span><i style="border-color:#dc2626;border-top-style:dashed"></i> Rejected fragment</span>
+      </div>
+      <figcaption>A chain arriving at a junction joins the fragment whose direction matches best (maximum dot product, turn &lt; 90°). Sharply turning fragments are left for a different chain, so the stroke flows smoothly through the junction.</figcaption>
+    </figure>
+
+    <h3>4.6 Smooth - moving average</h3>
+    <p>The raw skeleton has a ±1 px "staircase" wobble. Apply a low-pass <b>moving average</b> filter (e.g. convolution with the <code>[1,2,1]/4</code> kernel) a few times. Pin the endpoints of open polylines (don't let them move); for closed loops, wrap around. Keywords: <em>Laplacian smoothing / box smoothing</em>.</p>
+
+    <h3>4.7 Simplify - Douglas–Peucker</h3>
+    <p>Reduce the point count with the <b>Ramer–Douglas–Peucker</b> algorithm at a small tolerance (a finer tolerance keeps rounded curves more faithfully). It removes collinear / near-collinear vertices without changing the shape.</p>
+
+    <h3>4.8 Round - Chaikin</h3>
+    <p>Apply <b>Chaikin corner-cutting</b> (1-2 iterations) to turn the simplified polyline into a smooth curve. Each iteration replaces every corner with two points at 1/4 and 3/4 along its edges. Keyword: <em>Chaikin subdivision</em>. See also curve continuity in <a href="10-curve-fidelity.html">Ch. 10</a>.</p>
+
+    <h3>4.9 Map to world space (back to mm)</h3>
+    <p>Convert pixel coordinates back to world mm using the inverse of the rasterise transform (accounting for padding and <code>res</code>).</p>
+
+    <h3>4.10 Extend terminals</h3>
+    <p>The medial axis stops <em>about half a stroke-width short</em> of a stroke's visual endpoint. This is the "missing stroke tip" problem. The fix: extend every endpoint that is a genuine <b>terminal</b> outward along its tangent until it reaches the glyph boundary:</p>
+    <ul>
+      <li>A <b>terminal</b> is an endpoint that <em>no other</em> stroke touches within the <b>share tolerance</b> (about <b>0.35 mm</b>, see §5). An endpoint that lies within that tolerance of another polyline is a <b>junction</b>: leave it alone (extending would overshoot into the glyph). Closed loops have no terminals.</li>
+      <li>Estimate the tangent from a short back-off along the stroke, then step outward in small increments as long as the point remains inside the filled glyph, up to a maximum extension.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 560 260" width="560" role="img" aria-label="Extending true terminals out to the glyph boundary, fixing the missing stroke tip problem">
+        <!-- LEFT: missing tip -->
+        <text x="140" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">Before: missing tip</text>
+        <!-- glyph body ghost (a vertical stroke) -->
+        <rect x="118" y="50" width="44" height="170" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <!-- centerline stops short at both ends -->
+        <path d="M140 82 L140 188" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- gaps shown -->
+        <path d="M140 82 L140 62" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3"/>
+        <path d="M140 188 L140 208" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3"/>
+        <circle cx="140" cy="82" r="3.5" fill="#dc2626"/>
+        <circle cx="140" cy="188" r="3.5" fill="#dc2626"/>
+        <text x="196" y="70" font-size="10.5" fill="#dc2626" font-family="sans-serif">short by ~½ width</text>
+
+        <!-- arrow -->
+        <g stroke="#94a3b8" stroke-width="2"><path d="M250 135 h60" marker-end="url(#arE)"/></g>
+        <text x="280" y="125" text-anchor="middle" font-size="11" fill="#16a34a" font-family="sans-serif">extend</text>
+
+        <!-- RIGHT: extended -->
+        <text x="420" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">After: extended to boundary</text>
+        <rect x="398" y="50" width="44" height="170" rx="6" fill="#f3ede1" stroke="#d9cdb4"/>
+        <path d="M420 82 L420 188" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+        <!-- extensions along tangent to boundary -->
+        <path d="M420 82 L420 58" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <path d="M420 188 L420 212" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="420" cy="58" r="3.5" fill="#16a34a"/>
+        <circle cx="420" cy="212" r="3.5" fill="#16a34a"/>
+        <text x="452" y="60" font-size="10.5" fill="#16a34a" font-family="sans-serif">reaches boundary</text>
+
+        <defs>
+          <marker id="arE" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Original centerline</span>
+        <span><i style="border-color:#16a34a"></i> Extension</span>
+        <span><span class="dot" style="background:#f3ede1;border-color:#d9cdb4"></span> Glyph body</span>
+        <span><i style="border-color:#dc2626;border-top-style:dashed"></i> Missing gap</span>
+      </div>
+      <figcaption>The skeleton axis stops about half a stroke-width short (the <b>missing stroke tip</b> problem). We extend each <em>true terminal</em> along its tangent out to the glyph boundary. At a junction we do <b>not</b> extend, since that endpoint is already shared with another stroke.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Robustness warning: choose the share tolerance carefully</span>
+      <p>Keep the share tolerance <em>well below</em> the narrowest gap between distinct strokes. Otherwise, glyphs (or serifs) that touch or overlap will cause a true terminal to be misclassified as a junction (producing a <b>missing tip</b>) or vice versa (producing an overshoot spike). For glyphs that touch themselves, the max-extension cap (§5) bounds how far a mis-stepped extension can run along an unintended interior path.</p>
+    </div>
+
+    <h2>5. Cleanup thresholds (with rationale)</h2>
+    <p>Every tunable parameter has a reason behind it; understanding the reason is what lets you re-tune it intelligently.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Parameter</th><th>Typical value</th><th>Rationale</th></tr></thead>
+      <tbody>
+        <tr><td><code>res</code> (px/mm)</td><td>chosen so the <b>thinnest stroke is ≥ ~4-8 px</b> (2 is only a hard floor), capped by max bitmap size</td><td>too-coarse raster loses thin strokes; too-fine blows up the bitmap</td></tr>
+        <tr><td><code>maxSpur</code></td><td>~0.7 mm</td><td>just over a stroke half-width: kills serifs, keeps strokes</td></tr>
+        <tr><td>min stroke length</td><td>~0.6 mm</td><td>drops stray nubs / tiny loops</td></tr>
+        <tr><td>DP tolerance</td><td>~0.045·res px (≥0.7 px)</td><td>small ⇒ curves stay round</td></tr>
+        <tr><td>Chaikin iterations</td><td>2</td><td>smooth without over-shrinking</td></tr>
+        <tr><td>terminal/junction share tol</td><td>~0.35 mm</td><td>endpoints closer than this = a shared junction (don't extend); farther = a free terminal</td></tr>
+        <tr><td>terminal max extension</td><td>~2.2 mm</td><td>enough to reach the boundary without overshooting</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Resolution for small type</span>
+      <p><code>res</code> is chosen <em>per glyph</em> so the thinnest stroke has enough pixels. Small type (cap height ≲ 4-5 mm) needs a <b>high</b> <code>res</code> (tens of px/mm), or is better served by a real single-line font (§1). Smoothness measured in mm is preserved by DP + Chaikin regardless of <code>res</code>; what a too-coarse raster loses is <b>fidelity</b> (whether the centerline actually matches the glyph).</p>
+    </div>
+
+    <h2>6. Why this order</h2>
+    <p>Thin first (topology), then prune (remove noise), then trace (extract), then join (connect), <em>then</em> apply geometric smoothing (appearance), and extend terminals as the <b>very last step</b> (because it needs the finished tangents and the "is this a shared junction?" relationship between completed polylines). Reordering breaks these assumptions: for example, smoothing <em>before</em> pruning would blur the very spurs you want to detect and cut.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Principle: topology first, geometry second, relationships last</span>
+      <p>Three layers of work must be ordered correctly. The <b>topology</b> layer (thin, prune, trace, join) decides "how many strokes and how they connect"; the <b>geometry</b> layer (smooth, simplify, round) decides "how smooth they look"; the <b>relationship</b> layer (extend terminals) needs every stroke finished before it can tell terminal from junction.</p>
+    </div>
+
+    <h2>7. Checklist (AI generating centerline text)</h2>
+    <ol>
+      <li>Rasterise the filled glyph (non-zero fill, no AA, padded, bounded size).</li>
+      <li>Zhang–Suen thin down to a 1-px skeleton.</li>
+      <li>Prune spurs into junctions (a few passes).</li>
+      <li>Trace nodes → polylines; mop up remaining loops; use each edge once.</li>
+      <li>Join fragments by straightest continuation (turn &lt; 90°).</li>
+      <li>Smooth (moving average) → Douglas–Peucker → Chaikin.</li>
+      <li>Map back to world mm.</li>
+      <li>Extend <em>true terminals</em> to the boundary; leave junctions alone.</li>
+      <li>Return the chains in world space; they replace the glyph's outline/fill.</li>
+    </ol>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Result: elegant text in a single stroke</span>
+      <p>Done correctly through all ten steps, any filled glyph becomes a handful of smoothly flowing centerline chains, each stroke traced once, tips landing right at the boundary. The output feeds into the same downstream flow as every other source: minimise travel in <a href="07-toolpath-ordering.html">Ch. 7</a>, then emit code in <a href="08-machine-code.html">Ch. 8</a>. The time cost drops sharply because the fill scan lines disappear entirely, exactly as the cost model in <a href="11-performance.html">Ch. 11</a> predicts.</p>
+    </div>
+
+    <div class="pager">
+      <a href="04-outline-contour.html"><div class="dir">← Previous</div><div class="ttl">4 · Outline &amp; Contour</div></a>
+      <a class="next" href="06-pattern-shade.html"><div class="dir">Next chapter →</div><div class="ttl">6 · Pattern &amp; Shade Fill</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

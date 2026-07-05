@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>1 · Architecture &amp; Pipeline - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 1 · Architecture</span>
+    <h1>Architecture &amp; Pipeline</h1>
+    <p class="lead">Chapter 0 told us the destination: every drawing reduces to a set of <b>chains of points</b>. This chapter answers the next question: what system produces that set of chains in an organised way, so that adding a new machine or a new fill algorithm doesn't bring the whole building down? The answer is a strictly layered architecture, with five sequential stages and four boundary contracts that must never be broken.</p>
+
+    <h2>1. The layered responsibility model</h2>
+    <p>Picture the whole system as a pipeline of four functional blocks, running from <b>WORLD</b> space (the design, in the mm units the user sees) to <b>DEVICE</b> space (the machine, in the units its controller understands). Each block knows exactly what it needs to know, and nothing more:</p>
+
+    <figure>
+      <svg viewBox="0 0 760 260" width="760" role="img" aria-label="Four responsibility blocks: Document, Geometry, Toolpath, Emitter">
+        <g font-family="sans-serif">
+          <text x="20" y="30" font-size="12" fill="#8a94a6" font-weight="700">◀ WORLD (design)</text>
+          <line x1="20" y1="40" x2="550" y2="40" stroke="#b9d4ff" stroke-width="3"/>
+          <text x="590" y="30" font-size="12" fill="#16a34a" font-weight="700">DEVICE (machine) ▶</text>
+          <line x1="590" y1="40" x2="740" y2="40" stroke="#b7e3c2" stroke-width="3"/>
+
+          <rect x="20" y="70" width="150" height="92" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="95" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#1e49b8">Document</text>
+          <text x="95" y="118" text-anchor="middle" font-size="11" fill="#4a5568">shapes, styles,</text>
+          <text x="95" y="133" text-anchor="middle" font-size="11" fill="#4a5568">layers</text>
+          <text x="95" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"what to make"</text>
+
+          <rect x="210" y="70" width="150" height="92" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="285" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#1e49b8">Geometry</text>
+          <text x="285" y="118" text-anchor="middle" font-size="11" fill="#4a5568">chains</text>
+          <text x="285" y="133" text-anchor="middle" font-size="11" fill="#4a5568">(world mm)</text>
+          <text x="285" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"HOW to draw it"</text>
+
+          <rect x="400" y="70" width="150" height="92" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="475" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#6b3fb8">Toolpath</text>
+          <text x="475" y="118" text-anchor="middle" font-size="11" fill="#4a5568">ordered chains</text>
+          <text x="475" y="133" text-anchor="middle" font-size="11" fill="#4a5568">+ tool state</text>
+          <text x="475" y="152" text-anchor="middle" font-size="10" fill="#8a94a6">"in WHAT order"</text>
+
+          <rect x="590" y="70" width="150" height="92" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="665" y="98" text-anchor="middle" font-size="14" font-weight="700" fill="#9be59b">Emitter</text>
+          <text x="665" y="118" text-anchor="middle" font-size="11" fill="#d6e2ff">dialect text</text>
+          <text x="665" y="133" text-anchor="middle" font-size="11" fill="#d6e2ff">(GRBL/HPGL…)</text>
+          <text x="665" y="152" text-anchor="middle" font-size="10" fill="#6b86b8">"in WHAT language"</text>
+
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M170 116 h34" marker-end="url(#arA)"/>
+            <path d="M360 116 h34" marker-end="url(#arA)"/>
+            <path d="M550 116 h34" marker-end="url(#arA)"/>
+          </g>
+
+          <text x="187" y="200" text-anchor="middle" font-size="10" fill="#4a5568">receives only shapes</text>
+          <text x="187" y="213" text-anchor="middle" font-size="10" fill="#4a5568">with resolved style</text>
+          <text x="377" y="200" text-anchor="middle" font-size="10" fill="#4a5568">receives only</text>
+          <text x="377" y="213" text-anchor="middle" font-size="10" fill="#4a5568">raw chains</text>
+          <text x="567" y="200" text-anchor="middle" font-size="10" fill="#4a5568">receives only chains</text>
+          <text x="567" y="213" text-anchor="middle" font-size="10" fill="#4a5568">already ordered</text>
+
+          <text x="380" y="245" text-anchor="middle" font-size="11" fill="#8a94a6" font-style="italic">Each arrow is a contract: the receiver must not know more than what the contract provides.</text>
+        </g>
+        <defs>
+          <marker id="arA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Four blocks, four contracts. <b>Document → Geometry</b>: receives resolved shapes, knows nothing about layers/UI. <b>Geometry → Toolpath</b>: hands off only <em>chains</em> (lists of world-space points), knows nothing about machines or ordering. <b>Toolpath → Emitter</b>: hands off an <em>ordered</em> chain list with per-chain tool state (engaged/disengaged), knows nothing about command syntax. <b>Emitter → Device</b>: the only stage that knows the concrete dialect.</figcaption>
+    </figure>
+
+    <p>The most important feature of this model is that it is <b>unidirectional</b>: information only flows left to right, and no block ever "looks back" at an earlier one for more detail. Geometry doesn't need to know which layer a shape sits on; Toolpath doesn't need to know whether the machine is GRBL or HPGL; Emitter doesn't need to know the fill rule, because by the time it receives data, every geometric decision has already been finalised.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">The layer-correctness test</span>
+      <p>If you <b>cannot write a unit test</b> for a stage without instantiating a specific machine dialect, the architectural layering has leaked. A fill-pattern function that reads <code>machine.type == "grbl"</code> somewhere inside it is a clear warning sign.</p>
+    </div>
+
+    <h2>2. Stage 1 - Resolve geometry</h2>
+    <p>The goal of the first stage is to turn "a shape with a transform and a style" into <b>world-space outlines</b>, together with the knowledge of which regions are interior. Three things must happen, in this order:</p>
+
+    <div class="cards">
+      <div class="card"><h4>1 · Bake transforms</h4><p>Compose the shape's local transform with the transforms of every ancestor (group/layer), then apply it to the local outline to produce a path in world space. Rotation, scale, and shear must all be baked <em>before</em> flattening, so tolerance is measured in world units, not in a distorted local unit.</p></div>
+      <div class="card"><h4>2 · Choose a fill rule</h4><p><b>even-odd</b> or <b>non-zero winding</b>. Even-odd is the safe default: "a hole is wherever subpaths overlap an odd number of times" - it is independent of subpath winding direction. Details in <a href="02-geometry.html">Ch. 2</a>.</p></div>
+      <div class="card"><h4>3 · Classify the geometry role</h4><p>Which of the three roles in §5 below does this shape belong to - this decision drives the entire downstream branch.</p></div>
+    </div>
+
+    <p>The output of this stage is a resolved path in world coordinates, together with its style: does it have a fill? a stroke? which pattern? what shade/level?</p>
+
+    <h2>3. Stage 2 - Extract primitives</h2>
+    <p>The goal is to convert continuous curves into polylines, and split the geometry into the two things every downstream stage consumes:</p>
+
+    <div class="kv">
+      <div><dt>Outline geometry</dt><dd>The boundary polylines themselves - the shape's edge/outline.</dd></div>
+      <div><dt>Interior area</dt><dd>The closed interior region, used by fill and pattern engines.</dd></div>
+    </div>
+
+    <p>The key operation here is <b>curve flattening</b> at a controlled tolerance (see <a href="02-geometry.html">Ch. 2 §1</a>). Every downstream stage operates only on polylines, never on parametric curves - so this stage centralises all curve math in one place, instead of scattering it across the system.</p>
+
+    <h2>4. Stage 3 - Plan chains (the dispatch)</h2>
+    <p>For each resolved shape, the system must decide <em>which chain source(s)</em> apply - purely based on that shape's geometry and style, not on any "machine mode". This is a style-driven dispatch, independent of the machine:</p>
+
+    <pre><span class="kw">for</span> <span class="fn">each</span> shape <span class="kw">in</span> draw_order:
+    <span class="kw">if</span> shape <span class="kw">is</span> raster_image:
+        <span class="cm">→ RASTER path (scanline modulation)   # ch. 9; NOT chains</span>
+        <span class="kw">continue</span>
+
+    <span class="kw">if</span> single_stroke_text <span class="kw">and</span> shape <span class="kw">is</span> text:
+        <span class="cm">→ CENTERLINE chains                     # ch. 5</span>
+        <span class="kw">continue</span>
+
+    <span class="kw">if</span> shape.has_fill:                        <span class="cm"># covers the interior</span>
+        <span class="kw">if</span> fill_is_pattern <span class="kw">and</span> tiling_produced_strokes:
+            <span class="cm">→ PATTERN chains (tile + clip)          # ch. 6</span>
+        <span class="kw">elif</span> fill_is_solid:
+            <span class="cm">→ FILL-ENGINE chains (auto strategy)  # ch. 3</span>
+        <span class="kw">else</span>:  <span class="cm"># built-in hatch look, or texture producing nothing</span>
+            <span class="cm">→ HATCH chains at the pattern's angles    # ch. 3/6</span>
+
+    <span class="kw">if</span> shape.has_stroke <span class="kw">or</span> <span class="kw">not</span> shape.has_fill: <span class="cm"># draws the boundary</span>
+        <span class="cm">→ OUTLINE chains                          # ch. 4</span></pre>
+
+    <p>This is the whole decision. Note that it is <b>additive</b>, not exclusive: the last two <code>if</code> blocks can both be true at once for the same shape.</p>
+
+    <figure>
+      <svg viewBox="0 0 760 610" width="760" role="img" aria-label="Decision tree branching on the shape's style">
+        <defs>
+          <marker id="arB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+          <marker id="arBg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#16a34a"/>
+          </marker>
+        </defs>
+        <g font-family="sans-serif">
+          <rect x="300" y="10" width="160" height="42" rx="8" fill="#eef2f8" stroke="#dfe5ee"/>
+          <text x="380" y="36" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Next shape</text>
+
+          <path d="M380 52 v18" stroke="#94a3b8" stroke-width="2" marker-end="url(#arB)"/>
+          <polygon points="380,70 470,110 380,150 290,110" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="380" y="105" text-anchor="middle" font-size="11.5" fill="#1a2230">Is a raster</text>
+          <text x="380" y="120" text-anchor="middle" font-size="11.5" fill="#1a2230">image?</text>
+
+          <path d="M470 110 h60" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="500" y="102" font-size="10.5" fill="#16a34a" font-weight="700">yes</text>
+          <rect x="532" y="86" width="200" height="48" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="632" y="106" text-anchor="middle" font-size="12" font-weight="700" fill="#6b3fb8">RASTER</text>
+          <text x="632" y="122" text-anchor="middle" font-size="10.5" fill="#6b3fb8">scanline modulation (ch. 9)</text>
+
+          <text x="365" y="168" font-size="10.5" fill="#8a94a6" text-anchor="end">no</text>
+          <path d="M380 150 v28" stroke="#94a3b8" stroke-width="2" marker-end="url(#arB)"/>
+
+          <polygon points="380,178 495,225 380,272 265,225" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="380" y="220" text-anchor="middle" font-size="11" fill="#1a2230">Single-stroke text</text>
+          <text x="380" y="235" text-anchor="middle" font-size="11" fill="#1a2230">enabled &amp; is text?</text>
+
+          <path d="M495 225 h55" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="520" y="217" font-size="10.5" fill="#16a34a" font-weight="700">yes</text>
+          <rect x="552" y="201" width="180" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="642" y="221" text-anchor="middle" font-size="12" font-weight="700" fill="#1e49b8">CENTERLINE</text>
+          <text x="642" y="237" text-anchor="middle" font-size="10.5" fill="#1e49b8">skeleton chains (ch. 5)</text>
+
+          <text x="365" y="290" font-size="10.5" fill="#8a94a6" text-anchor="end">no</text>
+          <path d="M380 272 v30" stroke="#94a3b8" stroke-width="2"/>
+          <text x="380" y="318" text-anchor="middle" font-size="10.5" fill="#8a94a6" font-style="italic">the two checks below are independent, additive</text>
+          <path d="M380 322 v10" stroke="#94a3b8" stroke-width="1.6"/>
+          <path d="M380 332 L200 355" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arB)"/>
+          <path d="M380 332 L560 355" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arB)"/>
+
+          <polygon points="200,358 280,395 200,432 120,395" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="200" y="399" text-anchor="middle" font-size="12" fill="#1a2230">HAS FILL?</text>
+
+          <path d="M200 432 v20" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="212" y="450" font-size="10.5" fill="#16a34a" font-weight="700">yes</text>
+          <path d="M200 468 h0" stroke="none"/>
+          <path d="M200 460 l-95 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+          <path d="M200 460 l0 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+          <path d="M200 460 l95 34" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arBg)"/>
+
+          <rect x="15" y="498" width="130" height="48" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="80" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#6b3fb8">PATTERN</text>
+          <text x="80" y="533" text-anchor="middle" font-size="9.5" fill="#6b3fb8">pattern-produced strokes (ch. 6)</text>
+
+          <rect x="155" y="498" width="130" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="220" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1e49b8">FILL-ENGINE</text>
+          <text x="220" y="533" text-anchor="middle" font-size="9.5" fill="#1e49b8">solid fill, auto (ch. 3)</text>
+
+          <rect x="295" y="498" width="130" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="360" y="518" text-anchor="middle" font-size="10.5" font-weight="700" fill="#1e49b8">HATCH</text>
+          <text x="360" y="533" text-anchor="middle" font-size="9.5" fill="#1e49b8">built-in hatch look (ch. 3/6)</text>
+
+          <text x="88" y="465" font-size="10" fill="#8a94a6" text-anchor="end">no</text>
+          <path d="M200 432 q150 60 220 100" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arB)"/>
+
+          <polygon points="560,358 650,395 560,432 470,395" fill="#fff" stroke="#94a3b8" stroke-width="1.6"/>
+          <text x="560" y="390" text-anchor="middle" font-size="10.5" fill="#1a2230">HAS STROKE or</text>
+          <text x="560" y="404" text-anchor="middle" font-size="10.5" fill="#1a2230">NO FILL?</text>
+
+          <path d="M560 432 v30" stroke="#16a34a" stroke-width="2" marker-end="url(#arBg)"/>
+          <text x="573" y="450" font-size="10.5" fill="#16a34a" font-weight="700">yes</text>
+          <rect x="490" y="468" width="140" height="48" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="560" y="488" text-anchor="middle" font-size="11" font-weight="700" fill="#1e49b8">OUTLINE</text>
+          <text x="560" y="503" text-anchor="middle" font-size="9.5" fill="#1e49b8">boundary chains (ch. 4)</text>
+
+          <text x="645" y="450" font-size="10" fill="#8a94a6">no</text>
+          <path d="M620 400 q120 60 -20 190" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arB)"/>
+
+          <rect x="220" y="562" width="320" height="40" rx="8" fill="#eef2f8" stroke="#dfe5ee"/>
+          <text x="380" y="587" text-anchor="middle" font-size="11" fill="#1a2230">Final chains = (fill chain if any) + (outline chain if any)</text>
+          <path d="M80 546 v10 q0 10 30 10 h270" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M220 522 q0 30 60 40" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M360 522 q0 25 20 40" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+          <path d="M560 516 q0 30 -100 46" stroke="#c7cfdc" stroke-width="1.2" fill="none"/>
+        </g>
+      </svg>
+      <figcaption>The dispatch tree: raster and centerline are two <b>overriding exceptions</b> that fully replace the normal branch; fill and stroke below are <b>two independent, additive</b> checks - a shape with both a fill and a stroke passes through both and emits both kinds of chains.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Three additive cases to distinguish</span>
+      <p><b>A shape with both fill and stroke:</b> emits <em>both</em> fill chains <em>and</em> outline chains - the interior is covered and the border is drawn separately (for the concrete order/settings/shared-edge decisions this leaves open, see <a href="04-outline-contour.html">Ch. 4 §2b</a>).</p>
+      <p><b>A shape with fill, no stroke:</b> emits only fill chains - the design does not call for a border, so none is invented. Note: <em>not</em> because "the fill reaches the boundary" - inset-based fills typically leave a thin unfilled rim, see <a href="04-outline-contour.html">Ch. 4 §2</a>.</p>
+      <p><b>An unfilled shape</b> (an open path, a shape with only a stroke, or one with neither): emits only outline chains - with no interior, the boundary is the entire artwork.</p>
+    </div>
+
+    <p>The dispatch order also encodes two overriding exceptions: single-stroke text <em>entirely replaces</em> the normal outline/fill handling of a text shape (<a href="05-centerline-text.html">Ch. 5</a>); and raster is handled completely separately because it is not chain-based.</p>
+
+    <h2>5. The three geometry roles</h2>
+    <p>Every shape falls into exactly one of three <b>geometry roles</b>. Finding the best toolpath for each role is the entire job of Stages 3-5:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Role</th><th>Detection</th><th>Chains produced</th><th>Best-fit strategy</th></tr></thead>
+      <tbody>
+        <tr><td><b>Filled</b></td><td>has a valid fill</td><td>fill/pattern chains (+ outline if also stroked)</td><td>fill engine picks the time-optimal covering path from the region's shape (<a href="03-fill-algorithms.html">Ch. 3</a>)</td></tr>
+        <tr><td><b>Stroked</b> (outline)</td><td>has a stroke, or has no fill</td><td>outline chains</td><td>flatten boundary → chains; order for minimal travel (<a href="04-outline-contour.html">Ch. 4</a>, <a href="07-toolpath-ordering.html">Ch. 7</a>)</td></tr>
+        <tr><td><b>Text</b> (single-stroke)</td><td>text + option enabled</td><td>centerline chains</td><td>skeleton extraction so each glyph is a single pass (<a href="05-centerline-text.html">Ch. 5</a>)</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 700 220" width="700" role="img" aria-label="Three geometry roles: Filled, Stroked, Text">
+        <g font-family="sans-serif">
+          <rect x="20" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="120" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Filled</text>
+          <circle cx="120" cy="115" r="55" fill="#f3ede1" stroke="#d9cdb4" stroke-width="2"/>
+          <g stroke="#2563eb" stroke-width="2">
+            <line x1="75" y1="90" x2="165" y2="90"/>
+            <line x1="70" y1="105" x2="170" y2="105"/>
+            <line x1="67" y1="120" x2="173" y2="120"/>
+            <line x1="70" y1="135" x2="170" y2="135"/>
+            <line x1="75" y1="150" x2="165" y2="150"/>
+          </g>
+          <text x="120" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">fill chains cover the interior</text>
+
+          <rect x="250" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="350" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Stroked</text>
+          <path d="M300 150 L 320 90 Q 350 60 380 90 L 400 150" fill="none" stroke="#2563eb" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="300" cy="150" r="4" fill="#2563eb"/><circle cx="400" cy="150" r="4" fill="#2563eb"/>
+          <text x="350" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">outline chains are the entire artwork</text>
+
+          <rect x="480" y="20" width="200" height="170" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+          <text x="580" y="42" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Text (single-stroke)</text>
+          <text x="580" y="140" text-anchor="middle" font-size="90" font-weight="800" fill="#f3ede1" stroke="#d9cdb4" font-family="sans-serif">A</text>
+          <path d="M552 148 L580 68 L608 148 M563 118 h34" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <text x="580" y="200" text-anchor="middle" font-size="10.5" fill="#4a5568">centerline chains: 1 glyph = 1 stroke</text>
+        </g>
+      </svg>
+      <figcaption>Three roles, mutually exclusive <b>for chain-generation strategy</b>: solid regions use the fill engine, boundaries use outline chains, single-stroke text uses skeleton extraction. A filled-and-stroked shape is just the Filled role plus an added outline chain, not a fourth role.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">No "cut vs draw" branch</span>
+      <p>This architecture has <b>no</b> separate branch for "cutting machine" versus "drawing machine". The dispatch depends only on what the geometry <em>is</em> (fill / stroke / neither), so the same logic produces the correct chains for any point-to-point machine. Tool-specific refinements a cutting tool may want (overcut, kerf offset) are optional post-processing on the already-chosen chains (<a href="04-outline-contour.html">Ch. 4 §4</a>), not a separate pipeline.</p>
+    </div>
+
+    <h2>6. Stage 4 - Order chains</h2>
+    <p>Take the unordered chain list from Stage 3 and produce an order plus a direction for each chain that minimises pen-up travel. Detailed in <a href="07-toolpath-ordering.html">Ch. 7</a>. This stage is <b>pure geometry</b>: it never emits a machine command.</p>
+
+    <p>Ordering is performed <b>per layer / per tool group</b>, because different layers carry different machine settings (power, speed, force, passes) and must be emitted as contiguous blocks, not interleaved.</p>
+
+    <h2>7. Stage 5 - Emit dialect</h2>
+    <p>Serialise the ordered chains into machine commands. This is the only stage that knows about the dialect. It has four responsibilities:</p>
+
+    <div class="steps">
+      <span class="step">Preamble (units, absolute mode, tool init, home)</span>
+      <span class="arrow">→</span>
+      <span class="step">Track modal tool state (engaged/disengaged, power, feed)</span>
+      <span class="arrow">→</span>
+      <span class="step">Coordinate-system transforms (home corner, mirror, rotation, rotary wrap)</span>
+      <span class="arrow">→</span>
+      <span class="step">Postamble (disengage tool, return home, end)</span>
+    </div>
+
+    <p>Tracking modal state ensures redundant commands are never emitted - if the laser power is already at 800, there's no need to resend a power-800 command for every segment. Full details in <a href="08-machine-code.html">Ch. 8</a>.</p>
+
+    <h2>8. Four coordinate spaces</h2>
+    <p>Bugs tend to cluster at coordinate-space boundaries. So all four spaces must be named explicitly, never conflated:</p>
+
+    <div class="kv">
+      <div><dt>1 · Local space</dt><dd>A shape's own coordinates, before its transform is applied.</dd></div>
+      <div><dt>2 · World / design space</dt><dd>After baking every transform; a common mm plane with a defined origin corner and axis directions (commonly +X right, +Y down, like screen space). <b>All</b> chain production happens here.</dd></div>
+      <div><dt>3 · Machine space</dt><dd>The device's own coordinate system: origin at the machine's home corner, axis directions per the hardware, possibly mirrored or rotated relative to world space.</dd></div>
+      <div><dt>4 · Device units</dt><dd>Machine space scaled to the controller's integer/decimal unit (e.g. mm for GRBL; 1/40 mm "plotter units" for basic HPGL).</dd></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 760 260" width="760" role="img" aria-label="The four coordinate spaces and the transforms between them">
+        <defs>
+          <marker id="arC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+        <g font-family="sans-serif">
+          <rect x="10" y="6" width="380" height="180" rx="10" fill="none" stroke="#b9d4ff" stroke-width="1.4" stroke-dasharray="3 4"/>
+          <text x="200" y="200" text-anchor="middle" font-size="11" fill="#2563eb" font-weight="700">geometry / ordering - only in Geometry &amp; Toolpath</text>
+
+          <rect x="600" y="6" width="150" height="180" rx="10" fill="none" stroke="#b7e3c2" stroke-width="1.4" stroke-dasharray="3 4"/>
+          <text x="675" y="200" text-anchor="middle" font-size="11" fill="#16a34a" font-weight="700">only in Emitter</text>
+
+          <g>
+            <rect x="30" y="30" width="140" height="110" rx="8" fill="#fdfbf6" stroke="#e6ded0"/>
+            <text x="100" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a2230">1. Local</text>
+            <path d="M45 120 h30 M45 120 v-30" stroke="#c7cfdc" stroke-width="1.4"/>
+            <path d="M75 60 l20 45 20 -20 20 30" fill="none" stroke="#94a3b8" stroke-width="2"/>
+            <text x="100" y="133" text-anchor="middle" font-size="9.5" fill="#8a94a6">shape's own coordinates</text>
+          </g>
+
+          <path d="M170 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="185" y="78" text-anchor="middle" font-size="8.5" fill="#4a5568">bake</text>
+
+          <g>
+            <rect x="200" y="30" width="150" height="110" rx="8" fill="#fdfbf6" stroke="#e6ded0"/>
+            <text x="275" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1a2230">2. World (mm)</text>
+            <path d="M215 120 h30 M215 120 v-30" stroke="#c7cfdc" stroke-width="1.4"/>
+            <path d="M235 100 l25 -35 25 15 20 -25" fill="none" stroke="#2563eb" stroke-width="2.2"/>
+            <text x="275" y="133" text-anchor="middle" font-size="9.5" fill="#8a94a6">all chains produced here</text>
+          </g>
+
+          <path d="M350 85 q20 0 20 -6" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="392" y="60" text-anchor="middle" font-size="8.5" fill="#4a5568">affine: translate/</text>
+          <text x="392" y="72" text-anchor="middle" font-size="8.5" fill="#4a5568">mirror/rotate</text>
+          <text x="392" y="84" text-anchor="middle" font-size="8.5" fill="#4a5568">(emitter only)</text>
+
+          <g>
+            <rect x="420" y="30" width="150" height="110" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+            <text x="495" y="48" text-anchor="middle" font-size="11.5" font-weight="700" fill="#166534">3. Machine</text>
+            <path d="M435 50 h30 M435 50 v30" stroke="#9fd4ac" stroke-width="1.4"/>
+            <path d="M455 60 l25 35 25 -15 20 25" fill="none" stroke="#16a34a" stroke-width="2.2"/>
+            <text x="495" y="133" text-anchor="middle" font-size="9.5" fill="#4a7c59">origin at machine home</text>
+          </g>
+
+          <path d="M570 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arC)"/>
+          <text x="585" y="78" text-anchor="middle" font-size="8.5" fill="#4a5568">scale</text>
+
+          <g>
+            <rect x="618" y="30" width="120" height="110" rx="8" fill="#0f1729" stroke="#1c2b4a"/>
+            <text x="678" y="48" text-anchor="middle" font-size="11" font-weight="700" fill="#9be59b">4. Device</text>
+            <text x="678" y="63" text-anchor="middle" font-size="9.5" fill="#d6e2ff">units</text>
+            <text x="678" y="100" text-anchor="middle" font-size="17" font-family="monospace" fill="#9be59b">X120.4</text>
+            <text x="678" y="118" text-anchor="middle" font-size="17" font-family="monospace" fill="#9be59b">Y88.0</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Chains are produced and ordered <b>entirely</b> in World space. The world → machine transform (a small affine map) is applied only <b>in the emitter</b>, one point at a time, exactly once - so the preview always shows world space while the machine receives machine space.</figcaption>
+    </figure>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Rule</span>
+      <p>Produce and order chains entirely in world space. Convert to machine space + device units <b>exactly once</b>, per point, at emission time. Keep travel-to-home moves in raw machine coordinates, so "home" is always the true device origin, never passed through the world transform.</p>
+    </div>
+
+    <h2>9. Preview / simulator parity</h2>
+    <p>If the product displays a simulated toolpath, drive the simulator from the <b>exact same ordered chain list</b> the emitter consumes, tagging each move as engaged or travel. This guarantees that "what you preview is what the machine will do". Keep the simulator geometry in world space (readable to the user) and let only the emitted text carry the machine transform - never maintain two independent path computations.</p>
+
+    <h2>10. Robustness invariants</h2>
+    <p>The following three principles apply to every chain-generation stage, regardless of the specific algorithm:</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Never emit "nothing" for a non-empty area</span>
+      <p>Every planning strategy must have a fallback to a trivially-correct method - ugly beats empty.</p>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Skip incompatible sources gracefully</span>
+      <p>A blade machine silently drops raster images; a pen machine drops power modulation. Don't error - just omit.</p>
+    </div>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Bounded work</span>
+      <p>Every generator must cap its output (max rings, max sites, max raster cells, an ordering-optimisation cutoff), so that a tiny spacing on a huge area cannot hang the machine or exhaust memory. When a cap forces the result to be coarsened, record that as a human-readable annotation.</p>
+    </div>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Architecture is the frame; the rest is content</span>
+      <p>This chapter gave you the frame: four blocks, five stages, four coordinate spaces, three robustness invariants. The following chapters fill in each cell of this frame - starting with the geometry foundations (curve flattening, fill rule, offsetting) in <a href="02-geometry.html">Chapter 2</a>.</p>
+    </div>
+
+    <div class="pager">
+      <a href="00-introduction.html"><div class="dir">← Previous</div><div class="ttl">0 · The core idea: the Chain model</div></a>
+      <a class="next" href="02-geometry.html"><div class="dir">Next chapter →</div><div class="ttl">2 · Geometry foundations</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

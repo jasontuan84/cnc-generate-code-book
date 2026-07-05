@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>4 · Outline & Contour - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html" class="active"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 4 · Outline</span>
+    <h1>Outline &amp; Contour</h1>
+    <p class="lead">The outline seems like the simplest chain source of all: just trace the shape's boundary. But "trace the boundary" hides a few decisions that are anything but trivial - when it should actually be emitted, how it interacts with fills, and the physical compensations a cutting blade needs (overcut, kerf/tool offset). All of this is independent of the target machine language.</p>
+
+    <h2>1. What an outline is</h2>
+    <p>The <b>outline chains</b> of a shape are the polylines of its boundary path after the shape has gone through three processing steps:</p>
+
+    <div class="steps">
+      <div class="step">1 · Bake transforms into world space</div>
+      <span class="arrow">→</span>
+      <div class="step">2 · Flatten curves at the fine tolerance</div>
+      <span class="arrow">→</span>
+      <div class="step">3 · Split into subpaths (outer boundary + each hole)</div>
+    </div>
+
+    <p>Specifically: (1) every transform (translate/rotate/scale/shear) is <b>baked</b> into world space (see <a href="01-architecture.html">Ch. 1 §2</a>); (2) curves are <b>flattened</b> at the fine tolerance (<a href="02-geometry.html">Ch. 2 §1</a>); (3) the path is split into its <b>subpaths</b> - the outer boundary plus each hole boundary - each subpath becoming one chain.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Rule: subpath → chain</span>
+      <p>Every subpath with <b>2 or more points</b> becomes exactly one chain. A <b>closed</b> subpath becomes a closed chain (first point ≈ last point); an <b>open</b> subpath - an unclosed stroke, or a path imported from a file that was never closed - stays an open chain. Nothing else is required: an outline is purely the <em>geometry of the boundary</em>, independent of any fill rule or winding direction.</p>
+    </div>
+
+    <h2>2. When outlines are emitted (the presence rules)</h2>
+    <p>An outline is emitted purely from the shape's <b>geometry/style</b> - independent of the machine mode - when <b>either</b> of the following holds:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Condition</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>Shape has a <b>stroke</b> style</td><td>There is an explicit border line that needs to be drawn.</td></tr>
+        <tr><td>Shape has <b>no fill</b></td><td>With nothing to fill, the outline <em>is</em> the artwork.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>Conversely, a shape that is <b>filled but has no stroke</b> emits only its fill chains (<a href="03-fill-algorithms.html">Ch. 3</a>), <b>not</b> an outline - the design specifies no border, so none is invented.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Three fill/stroke combinations and the chains they emit">
+        <g font-family="sans-serif">
+          <!-- combo 1: stroke only, no fill -->
+          <g>
+            <text x="110" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Stroke, no fill</text>
+            <circle cx="110" cy="105" r="46" fill="none" stroke="#2563eb" stroke-width="4"/>
+            <path d="M40 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="110" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Emits: <tspan font-weight="700" fill="#2563eb">outline</tspan> (is the entire artwork)</text>
+          </g>
+          <!-- combo 2: fill only, no stroke -->
+          <g>
+            <text x="360" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Fill, no stroke</text>
+            <circle cx="360" cy="105" r="46" fill="#f3ede1" stroke="none"/>
+            <path d="M290 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="360" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Emits: <tspan font-weight="700" fill="#7c3aed">fill chains only</tspan>, no outline</text>
+          </g>
+          <!-- combo 3: fill and stroke -->
+          <g>
+            <text x="610" y="30" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Both fill and stroke</text>
+            <circle cx="610" cy="105" r="46" fill="#f3ede1" stroke="#2563eb" stroke-width="4"/>
+            <path d="M540 175 h140" stroke="#dfe5ee" stroke-width="1"/>
+            <text x="610" y="200" text-anchor="middle" font-size="11.5" fill="#4a5568">Emits: <tspan font-weight="700" fill="#7c3aed">fill</tspan> + <tspan font-weight="700" fill="#2563eb">outline</tspan> (see §2b)</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Presence rules: an outline is emitted when there is a stroke, or when there is no fill (the outline is the artwork itself). Only when a shape has a fill but <em>no</em> stroke is the outline skipped.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Don't rely on "the fill already reaches the boundary"</span>
+      <p>It's true that a scanline fill does reach all the way to the boundary - but inset-based fills (contour/spiral, <a href="03-fill-algorithms.html">Ch. 3 §3.4</a>) stop about <em>half a line spacing</em> short of the boundary and leave a thin unfilled rim. If exact edge coverage matters on a borderless filled shape, make the fill hug the boundary more tightly rather than bolting on a stray outline.</p>
+    </div>
+
+    <h3>2b. Shapes with both fill and stroke - emission decisions</h3>
+    <p>When a shape has <b>both</b> a fill and a stroke, it produces two chain sets over the same boundary region. The additive dispatch rule says "emit both" - but leaves three concrete decisions that the theory alone doesn't pin down:</p>
+
+    <div class="kv">
+      <div><dt>Settings</dt><dd>A shape's fill and outline live on the <em>same</em> layer/tool-group, so they inherit the <b>same</b> power/speed/pass-count (<a href="08-machine-code.html">Ch. 8 §7</a>). If the outline needs different settings (darker, or cut all the way through, while the fill is only lightly marked), put it on a <b>separate layer</b>.</dd></div>
+      <div><dt>Order</dt><dd>Prefer <b>fill first, then outline</b>, so a crisp border isn't smeared by later fill passes. Greedy ordering (<a href="07-toolpath-ordering.html">Ch. 7</a>) does <em>not</em> guarantee this on its own - use an affinity/grouping key (<a href="07-toolpath-ordering.html">Ch. 7 §5</a>) to keep a shape's fill-then-outline pair travelling together.</dd></div>
+      <div><dt>Shared edge / double pass</dt><dd>The outermost lines of a scanline fill and the outline both sit close to the boundary; on a marking tool, this shared edge may get passed over twice. Usually harmless (even beneficial - a crisper edge). To avoid it, <b>inset the fill by ½·lineWidth</b> so the outline is the sole "owner" of the boundary. Note this is <em>not</em> the endpoint <b>welding</b> of <a href="10-curve-fidelity.html">Ch. 10 §3.1</a>: welding joins fragments <em>within the same</em> chain source; it never merges a fill with a separate outline.</dd></div>
+    </div>
+
+    <h2>3. Outline vs Contour fill: don't confuse them</h2>
+    <p>They share the same primitive - trace the boundary - but the two features answer two different questions, and must be kept distinct:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Outline (this chapter)</h4><p>The boundary drawn <b>once</b>. A single pass along each subpath. Answers "draw the boundary".</p></div>
+      <div class="card"><h4>Contour fill (<a href="03-fill-algorithms.html">Ch. 3 §3.4</a>)</h4><p>The boundary drawn <b>many times</b>, each inset inward by one line spacing, to <b>cover the interior area</b>. Answers "fill the interior by echoing the boundary".</p></div>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 660 260" width="660" role="img" aria-label="Comparing a single-pass outline with a many-pass inward-inset contour fill">
+        <g font-family="sans-serif">
+          <text x="160" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">Outline - boundary drawn ONCE</text>
+          <path d="M80 200 C 60 100, 260 100, 240 200 C 260 250, 60 250, 80 200 Z" fill="#f3ede1" fill-opacity=".4" stroke="#2563eb" stroke-width="4"/>
+          <circle cx="80" cy="200" r="5" fill="#2563eb"/>
+          <text x="160" y="245" text-anchor="middle" font-size="11" fill="#4a5568">1 pass along the boundary</text>
+
+          <line x1="330" y1="40" x2="330" y2="230" stroke="#dfe5ee" stroke-width="1"/>
+
+          <text x="500" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">Contour fill - boundary drawn MANY times, insetting</text>
+          <path d="M420 200 C 400 100, 600 100, 580 200 C 600 250, 400 250, 420 200 Z" fill="none" stroke="#2563eb" stroke-width="3"/>
+          <path d="M432 195 C 416 118, 584 118, 570 195 C 584 235, 416 235, 432 195 Z" fill="none" stroke="#2563eb" stroke-width="2.4" opacity=".8"/>
+          <path d="M446 190 C 434 138, 566 138, 558 190 C 566 220, 434 220, 446 190 Z" fill="none" stroke="#2563eb" stroke-width="2" opacity=".65"/>
+          <path d="M462 188 C 452 156, 548 156, 540 188 C 548 205, 452 205, 462 188 Z" fill="none" stroke="#2563eb" stroke-width="1.6" opacity=".5"/>
+          <text x="500" y="245" text-anchor="middle" font-size="11" fill="#4a5568">N passes, each inset by one line spacing</text>
+        </g>
+      </svg>
+      <figcaption>Two features share the boundary-tracing primitive, but serve different purposes: <b>outline</b> draws the boundary exactly once to produce a border, while <b>contour fill</b> repeats the progressively inset boundary to cover the entire interior.</figcaption>
+    </figure>
+
+    <h2>4. Optional tool compensations (blade/knife/kerf)</h2>
+    <p>These are <b>optional post-processing steps</b> applied to already-chosen outline chains, relevant only when the tool is a physical <b>cutting</b> blade. A marking tool (pen, laser marking) needs none of these - the mark sits directly on the path. They are not a separate mode or pipeline; for a marking tool, skip them entirely.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Order of operations relative to ordering (Ch. 7)</span>
+      <p>Apply <b>kerf offset BEFORE ordering</b> - it changes the geometry that the ordering and loop re-rooting steps will operate on. Apply <b>overcut AFTER ordering and loop re-rooting</b> - overcut extends past the loop's <em>final</em> start vertex, so it must run on the oriented, re-rooted chain, re-crossing wherever the seam ended up. Reversing this order (overcut before re-rooting) places the extension mid-loop and fails to sever anything.</p>
+    </div>
+
+    <div class="kv">
+      <div><dt>4.1 · Overcut</dt><dd>Extend a small distance past the start point of a closed loop so the blade fully severs the seam.</dd></div>
+      <div><dt>4.2 · Kerf / tool offset</dt><dd>Offset the path by half the kerf width so the cut size matches the drawn size.</dd></div>
+      <div><dt>4.3 · Corner sharpening</dt><dd>Compensate for corners rounded off because the blade trails the pivot.</dd></div>
+    </div>
+
+    <h3>4.1 Overcut (fully closing a severed loop)</h3>
+    <p>A drag knife (used in vinyl/decal cutters) has its blade tip positioned <b>behind</b> its pivot axis. On a closed loop, the very start of the loop is only <em>scored</em> until the blade has rotated to face the next direction; the cut loop may not fully separate at the seam. <b>Overcut</b> fixes this:</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Overcut definition</span>
+      <p>After closing a loop, extend the path a small distance (≈ 0.5-1.0 mm) <b>past the start point, continuing in the direction of the first segment</b>, so the blade re-crosses the seam and fully severs it.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 640 260" width="640" role="img" aria-label="Overcut illustration: drag-knife blade trailing the pivot, and the extension past the start point">
+        <g font-family="sans-serif">
+          <path d="M200 200 C 150 90, 380 60, 420 150 C 450 220, 260 250, 200 200 Z" fill="#f3ede1" fill-opacity=".4" stroke="#2563eb" stroke-width="3.5"/>
+          <!-- overcut extension segment, dashed accent -->
+          <path d="M200 200 L 232 178" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="200" cy="200" r="6" fill="#fff" stroke="#2563eb" stroke-width="2.5"/>
+          <text x="200" y="228" text-anchor="middle" font-size="11.5" fill="#2563eb" font-weight="700">start point</text>
+          <circle cx="232" cy="178" r="4" fill="#dc2626"/>
+          <text x="255" y="168" font-size="11.5" fill="#dc2626" font-weight="700">overcut ≈ 0.5-1.0 mm</text>
+
+          <!-- pivot vs blade tip illustration, offset -->
+          <g transform="translate(470,150)">
+            <circle cx="0" cy="0" r="34" fill="#eef2f8" stroke="#dfe5ee"/>
+            <circle cx="0" cy="0" r="4" fill="#4a5568"/>
+            <text x="0" y="-42" text-anchor="middle" font-size="10.5" fill="#4a5568">pivot</text>
+            <circle cx="10" cy="16" r="3.5" fill="#dc2626"/>
+            <text x="34" y="26" font-size="10.5" fill="#dc2626">blade tip (trailing)</text>
+            <line x1="0" y1="0" x2="10" y2="16" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="2 2"/>
+          </g>
+        </g>
+      </svg>
+      <figcaption>A drag-knife blade trails behind its pivot axis, so it hasn't fully cut through right at the start point. Overcut extends the path a small distance past that point, in the direction of the first segment, so the blade re-crosses the seam.</figcaption>
+    </figure>
+
+    <p>The algorithm, applied after a chain has been closed into a loop:</p>
+    <pre><code><span class="kw">if</span> chain.is_closed <span class="kw">and</span> overcut &gt; <span class="st">0</span>:
+    dir = unit(chain[<span class="st">1</span>] − chain[<span class="st">0</span>])
+    chain.append(chain[<span class="st">0</span>] + dir × overcut)  <span class="cm">// extend past the start point</span></code></pre>
+
+    <p>Apply only to <b>closed</b> chains and only when the tool is a <b>cutting</b> tool. For a marking tool, this extension would leave a stray tick mark - do not apply. It is a no-op for open chains or a negligible overcut value.</p>
+
+    <h3>4.2 Kerf / tool offset</h3>
+    <p>The tool removes (or marks) a certain material width. To cut the exact size drawn, offset the path by half the kerf width:</p>
+
+    <ul>
+      <li><b>Offset outward</b> when cutting a hole to size, or an outer boundary that must keep its outer dimension.</li>
+      <li><b>Offset inward</b> for the opposite intent.</li>
+    </ul>
+
+    <p>Uses the same <b>polygon offsetting</b> primitive as contour fill (<a href="02-geometry.html">Ch. 2 §7</a>). Many simple cutters skip true kerf compensation and instead record the installed <b>blade offset</b> as a calibration note, sharpening corners with a small extra travel move; full kerf compensation is the general solution when dimensional accuracy really matters.</p>
+
+    <figure>
+      <svg viewBox="0 0 660 260" width="660" role="img" aria-label="Kerf offset direction differs for outer boundary versus hole boundary">
+        <g font-family="sans-serif">
+          <!-- outer part with a hole -->
+          <rect x="70" y="60" width="220" height="150" rx="14" fill="#f3ede1" stroke="#2563eb" stroke-width="2.5"/>
+          <rect x="60" y="48" width="240" height="174" rx="18" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="4 4"/>
+          <circle cx="180" cy="135" r="34" fill="#ffffff" stroke="#2563eb" stroke-width="2.5"/>
+          <circle cx="180" cy="135" r="26" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="4 4"/>
+          <text x="180" y="235" text-anchor="middle" font-size="11.5" fill="#4a5568">Outer boundary → offset OUTWARD · hole boundary → offset INWARD</text>
+
+          <!-- legend -->
+          <g transform="translate(400,70)">
+            <rect x="0" y="0" width="230" height="140" rx="10" fill="#fdfbf6" stroke="#e6ded0"/>
+            <line x1="16" y1="30" x2="46" y2="30" stroke="#2563eb" stroke-width="3"/>
+            <text x="54" y="34" font-size="11.5" fill="#4a5568">Original drawn path</text>
+            <line x1="16" y1="60" x2="46" y2="60" stroke="#dc2626" stroke-width="3" stroke-dasharray="4 4"/>
+            <text x="54" y="64" font-size="11.5" fill="#4a5568">Path after kerf offset (½ width)</text>
+            <text x="16" y="100" font-size="11" fill="#8a94a6">Offset direction depends on</text>
+            <text x="16" y="118" font-size="11" fill="#8a94a6">outer-boundary vs hole role</text>
+          </g>
+        </g>
+      </svg>
+      <figcaption>Kerf offset uses the same polygon-offsetting primitive as contour fill, but the <b>offset direction</b> must match the subpath's role: an outer boundary offsets outward to keep the part's dimension, a hole boundary offsets inward to keep the hole's dimension.</figcaption>
+    </figure>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Offset direction is the easiest thing to get wrong</span>
+      <p>Offsetting a boundary in the wrong direction changes the part's dimension by a full kerf width. Tie the offset direction to whether each subpath is an outer boundary or a hole (winding/even-odd depth, <a href="02-geometry.html">Ch. 2 §4</a>).</p>
+    </div>
+
+    <h3>4.3 Corner sharpening (drag knife)</h3>
+    <p>Because the blade trails the pivot, sharp corners get rounded off. Standard fix: at each corner, lift-and-swivel or add extra travel equal to the blade-offset length so the blade tip reaches the true corner before proceeding onto the next edge. This is a per-corner refinement of the same idea behind overcut.</p>
+
+    <h2>5. Multi-pass</h2>
+    <p>Thick material (or a need for a darker mark) requires several passes over the same outline. Emit the <b>ordered</b> chains, then repeat that entire set <code>N</code> times (usually lowering the tool slightly each pass, if the machine has a Z axis).</p>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">Order once, repeat the result</span>
+      <p>Order the chains <b>exactly once</b>; repeat that ordered result so every pass follows <em>the same</em> travel-optimised path. Do not re-order per pass.</p>
+    </div>
+
+    <h2>6. Stroke variants: dashed &amp; variable-width</h2>
+    <p>Two common stroke styles need pre-processing <b>before</b> the boundary becomes chains:</p>
+
+    <h3>6.1 Dashed / dotted strokes</h3>
+    <p>A dash array turns a continuous boundary into <b>many short open chains</b> with gaps between them. Walk along the path by arc length, emitting an "on" segment for each dash length and skipping each gap length. Each dash is an independent chain (the ordering step will travel between them). Do this <b>after flattening</b> (measuring length along the polyline).</p>
+
+    <figure>
+      <svg viewBox="0 0 640 180" width="640" role="img" aria-label="A continuous boundary turning into many short open chains under a dashed stroke">
+        <g font-family="sans-serif">
+          <text x="150" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Continuous boundary</text>
+          <path d="M40 90 Q150 20 260 90" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+
+          <path d="M400 90 L470 90" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#ar4)"/>
+
+          <text x="560" y="26" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1a2230">Many short open chains</text>
+          <path d="M480 90 Q490 68 505 60" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M525 52 Q545 46 565 46" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M585 50 Q605 58 620 72" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+          <path d="M480 90 Q470 112 495 122" fill="none" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="3 3" opacity=".6"/>
+          <text x="550" y="150" text-anchor="middle" font-size="11" fill="#4a5568">each "dash" = one independent chain, separated by "gaps"</text>
+        </g>
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>A dash array turns a continuously drawn boundary into many short open chains, one per "on" segment of the dash pattern; the ordering step (Ch. 7) decides the travel order between them.</figcaption>
+    </figure>
+
+    <h3>6.2 Variable-width strokes (calligraphic, pressure, tapered)</h3>
+    <p>Two choices:</p>
+    <ul>
+      <li><b>(a)</b> treat the stroke as a <b>filled region</b>: expand the centerline into its variable-width outline and fill it (<a href="03-fill-algorithms.html">Ch. 3</a>); or</li>
+      <li><b>(b)</b> if the tool's mark width already matches, just draw the <b>centerline</b> once and ignore the width.</li>
+    </ul>
+    <p>Choose (a) when the width variation is visible at tool scale; choose (b) when it isn't.</p>
+
+    <h2>7. Summary: open &amp; closed handling</h2>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Case</th><th>Outline behaviour</th></tr></thead>
+      <tbody>
+        <tr><td>Closed subpath, marking tool</td><td>Trace once; no overcut.</td></tr>
+        <tr><td>Closed subpath, cutting tool</td><td>Trace once + <b>overcut</b>; optional kerf offset.</td></tr>
+        <tr><td>Open subpath</td><td>Trace from one endpoint to the other; ordering may reverse it; never overcut.</td></tr>
+        <tr><td>Hole subpath</td><td>Emitted like any other subpath; for a cutting tool, offset in the <em>opposite</em> direction to the outer boundary.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">"Marking tool" vs "cutting tool"</span>
+      <p>This is a distinction of <b>tool capability</b> (does the tool sever material?), <b>not</b> a UI/job mode. It only changes whether the optional compensations in §4 apply; the outline chains themselves are produced identically in both cases.</p>
+    </div>
+
+    <h2>8. Checklist (when generating outline chains)</h2>
+    <ul>
+      <li>Bake every transform, then flatten at the fine tolerance.</li>
+      <li>Emit one chain per subpath (≥ 2 points).</li>
+      <li>Apply the presence rules (§2) so outline and fill don't unintentionally overlap.</li>
+      <li>Cutting tool only: overcut closed loops; consider kerf offset with the correct direction per subpath role.</li>
+      <li>Repeat the <em>ordered</em> chains for multi-pass; don't re-order per pass.</li>
+      <li>Return chains in world space; ordering and code emission are shared across all chain sources.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="03-fill-algorithms.html"><div class="dir">← Previous</div><div class="ttl">3 · Fill Algorithms &amp; Auto Selector</div></a>
+      <a class="next" href="05-centerline-text.html"><div class="dir">Next chapter →</div><div class="ttl">5 · Single-Stroke (Centerline) Text</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

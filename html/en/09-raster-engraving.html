@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>9 · Raster Engraving - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html" class="active"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 9 · Raster</span>
+    <h1>Raster Engraving</h1>
+    <p class="lead">A bitmap image is <b>not</b> a chain source. You cannot meaningfully "outline" or "fill" a photograph with polylines; instead the tool sweeps across the image row by row and <b>modulates power</b> per pixel (dark = strong, light = off). This approach only applies to machines that can vary power <em>while moving</em> (laser, variable-pressure engraver) - a pen or blade normally cannot render tone, so raster shapes are simply skipped.</p>
+
+    <p>This is the one part of the system that <em>bypasses</em> the chain/ordering pipeline learned in earlier chapters; it emits its own moves directly. The chapter still belongs in the book because "convert artwork to machine code" must handle images too, not just vector shapes.</p>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Skipped for non-modulating tools</span>
+      <p>If the selected tool is a pen or blade (unable to vary intensity while moving), the raster stage is <b>skipped entirely</b> - it does not try to "fake" tone with stroke density, since that is the job of pattern/hatch fill (Chapter 6), not this raster engraver.</p>
+    </div>
+
+    <h2>1. The model</h2>
+    <p>The whole path from image to machine code fits into four consecutive transforms: sample the image onto a physical grid, turn the grayscale values into a power grid, then scan that grid boustrophedon-style and merge cells of equal power into a single stroke.</p>
+
+    <div class="steps">
+      <span class="step">Image (pixels + tone)</span><span class="arrow">→</span>
+      <span class="step">mm grid at the scan step</span><span class="arrow">→</span>
+      <span class="step">Power grid</span><span class="arrow">→</span>
+      <span class="step">Boustrophedon scan, run merge</span><span class="arrow">→</span>
+      <span class="step">Travel / Working move</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 740 260" width="740" role="img" aria-label="Four-stage model diagram of raster engraving">
+        <g font-family="sans-serif">
+          <rect x="14" y="30" width="150" height="76" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="89" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">Source image</text>
+          <text x="89" y="76" text-anchor="middle" font-size="11" fill="#4a5568">pixels + tone</text>
+          <text x="89" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">0 (black) .. 255 (white)</text>
+
+          <rect x="196" y="30" width="150" height="76" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="271" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">mm grid</text>
+          <text x="271" y="76" text-anchor="middle" font-size="11" fill="#4a5568">colStep × rowStep</text>
+          <text x="271" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">sample at cell center</text>
+
+          <rect x="378" y="30" width="150" height="76" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="453" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">Power grid</text>
+          <text x="453" y="76" text-anchor="middle" font-size="11" fill="#4a5568">gamma or dither</text>
+          <text x="453" y="92" text-anchor="middle" font-size="10" fill="#8a94a6">[minPower, maxPower]</text>
+
+          <rect x="560" y="30" width="166" height="76" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="643" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="#9be59b">Scan &amp; merge runs</text>
+          <text x="643" y="76" text-anchor="middle" font-size="11" fill="#d6e2ff">boustrophedon</text>
+          <text x="643" y="92" text-anchor="middle" font-size="10" fill="#6b86b8">run-length merge</text>
+
+          <g stroke="#94a3b8" stroke-width="2">
+            <path d="M164 68 h22" marker-end="url(#arR)"/>
+            <path d="M346 68 h22" marker-end="url(#arR)"/>
+            <path d="M528 68 h22" marker-end="url(#arR)"/>
+          </g>
+        </g>
+
+        <!-- output lane: alternating travel / working -->
+        <g font-family="sans-serif">
+          <text x="20" y="150" font-size="11.5" fill="#8a94a6">Output (one scan row):</text>
+          <path d="M20 175 L60 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M60 175 L180 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M180 175 L230 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M230 175 L420 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M420 175 L470 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M470 175 L560 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+          <path d="M560 175 L640 175" stroke="#94a3b8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round"/>
+          <path d="M640 175 L720 175" stroke="#2563eb" stroke-width="6" stroke-linecap="butt"/>
+
+          <text x="120" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">high power</text>
+          <text x="290" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">low power</text>
+          <text x="510" y="200" text-anchor="middle" font-size="10.5" fill="#2563eb">medium power</text>
+
+          <text x="370" y="235" text-anchor="middle" font-size="11.5" fill="#8a94a6">The emitter (Chapter 8) translates travel/working + power into G0/G1+M3/M4 of the target dialect.</text>
+        </g>
+
+        <defs>
+          <marker id="arR" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Working move (engaged, power &gt; 0)</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Travel (through white/clipped area)</span>
+      </div>
+      <figcaption>Four stages turn an image into machine motion. As with every other source, the algorithm only emits abstract <b>travel</b>/<b>engaged</b> moves with a power value; the emitter (<a href="08-machine-code.html">Chapter 8</a>) is what maps them to a concrete dialect (GRBL <code>G0</code>/<code>G1</code>+<code>M4</code> for instance - the dialect letters here are only for illustration).</figcaption>
+    </figure>
+
+    <h2>2. Sampling grid: never oversample</h2>
+    <p>The scan step is chosen from <b>both</b> the desired engraving spacing and the image's source resolution:</p>
+
+    <pre><code><span class="fn">colStep</span> = <span class="kw">max</span>(interval, imageWidthMm  / imagePixelsWide)
+<span class="fn">rowStep</span> = <span class="kw">max</span>(interval, imageHeightMm / imagePixelsTall)</code></pre>
+
+    <ul>
+      <li><code>interval</code> - the spacing between engraving lines (material/beam dependent).</li>
+      <li><code>max(...)</code> prevents <b>oversampling</b> the bitmap: scanning finer than one source pixel is pointless, it only adds motion without adding information.</li>
+      <li><b>Bounded work:</b> cap the total cell count (<code>rows × cols ≤ kMaxCells</code>). If exceeded, coarsen both steps by a factor of <code>√(cells / kMaxCells)</code> and record a human-readable note. This stops a large image at a tiny scan interval from producing millions of moves.</li>
+    </ul>
+
+    <p>Sample each cell at its <b>center</b>, in the image's own local space, so the scan rides the image's own transform (rotation/scale). Cells outside an optional <b>clip mask</b> are treated as white (skipped, not engraved).</p>
+
+    <figure>
+      <svg viewBox="0 0 700 280" width="700" role="img" aria-label="mm sampling grid overlaid on the source pixel grid">
+        <g font-family="sans-serif">
+          <text x="20" y="26" font-size="12.5" fill="#8a94a6">Source pixels (much finer than colStep/rowStep)</text>
+          <!-- fine pixel grid -->
+          <g stroke="#e6ded0" stroke-width="1" fill="#fdfbf6">
+            <rect x="40" y="40" width="360" height="200"/>
+          </g>
+          <g stroke="#f0ebe0" stroke-width="1">
+            <path d="M76 40 V240 M112 40 V240 M148 40 V240 M184 40 V240 M220 40 V240 M256 40 V240 M292 40 V240 M328 40 V240 M364 40 V240"/>
+            <path d="M40 70 H400 M40 100 H400 M40 130 H400 M40 160 H400 M40 190 H400 M40 220 H400"/>
+          </g>
+
+          <!-- coarse mm sampling grid (colStep x rowStep) -->
+          <g stroke="#2563eb" stroke-width="2.2" fill="none">
+            <path d="M40 40 V240 M148 40 V240 M256 40 V240 M364 40 V240"/>
+            <path d="M40 40 H400 M40 130 H400 M40 220 H400"/>
+            <rect x="40" y="40" width="360" height="200"/>
+          </g>
+
+          <!-- cell centers -->
+          <g fill="#7c3aed">
+            <circle cx="94" cy="85" r="3.5"/><circle cx="202" cy="85" r="3.5"/><circle cx="310" cy="85" r="3.5"/>
+            <circle cx="94" cy="175" r="3.5"/><circle cx="202" cy="175" r="3.5"/><circle cx="310" cy="175" r="3.5"/>
+          </g>
+
+          <text x="200" y="258" text-anchor="middle" font-size="11" fill="#7c3aed">● cell center = sample point (image-local space)</text>
+
+          <!-- annotation braces -->
+          <text x="470" y="70" font-size="12" fill="#1e49b8" font-weight="700">colStep</text>
+          <path d="M420 40 L420 130" stroke="#1e49b8" stroke-width="1.5"/>
+          <path d="M415 40 L425 40 M415 130 L425 130" stroke="#1e49b8" stroke-width="1.5"/>
+
+          <text x="470" y="150" font-size="11" fill="#4a5568" width="200">= max(interval,</text>
+          <text x="470" y="168" font-size="11" fill="#4a5568">imgWmm / pxWide)</text>
+
+          <rect x="440" y="190" width="220" height="70" rx="8" fill="#fff8e6" stroke="#f2d88a"/>
+          <text x="452" y="210" font-size="11" fill="#8a5a00" font-weight="700">If rows×cols &gt; kMaxCells:</text>
+          <text x="452" y="228" font-size="11" fill="#8a5a00">coarsen ×= √(cells / kMaxCells)</text>
+          <text x="452" y="246" font-size="10.5" fill="#8a5a00">→ note for the user</text>
+        </g>
+      </svg>
+      <figcaption>The scan grid (blue, thick) is always coarser than or equal to the source pixel grid (faint, thin) - never finer. Each cell is sampled at its center (●), and if the total cell count exceeds the <code>kMaxCells</code> cap, both steps are coarsened uniformly by the square root of the overshoot ratio (see also <a href="11-performance.html">Chapter 11</a> on bounding work).</figcaption>
+    </figure>
+
+    <h2>3. Tone reproduction: two modes</h2>
+    <p>There are two ways to turn each cell's gray value into engraving power: continuous modulation through a gamma curve, or quantisation to 1-bit via dithering.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Mode</th><th>Power output</th><th>Suited when</th></tr></thead>
+      <tbody>
+        <tr><td><b>Grayscale + gamma</b></td><td>Continuous, within <code>[minPower, maxPower]</code></td><td>Smoothly modulating tool (diode laser), image with a wide gray range</td></tr>
+        <tr><td><b>1-bit dithering (Floyd&ndash;Steinberg)</b></td><td>Binary, 0 or full power</td><td>On/off-only tool, or a crisper "dot" look is preferred over a soft gray field</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>3.1 Grayscale power modulation (with gamma)</h3>
+    <p>Map cell tone directly to a power level within <code>[minPower, maxPower]</code>:</p>
+
+    <pre><code>v = <span class="st">255</span> - gray            <span class="cm"># invert: darker burns hottest</span>
+<span class="kw">if</span> v &lt;= <span class="st">0</span>: power = <span class="st">0</span>      <span class="cm"># white → off (hard skip, no engrave)</span>
+t = v / <span class="st">255</span>
+<span class="kw">if</span> gamma != <span class="st">1</span>: t = t^gamma   <span class="cm"># tone curve: correct for the material's non-linear response</span>
+power = minPower + <span class="fn">round</span>(t × (maxPower - minPower))</code></pre>
+
+    <ul>
+      <li><code>minPower</code> - a power floor so light gray areas still leave a mark (below the tool's activation threshold, nothing shows up at all).</li>
+      <li><code>gamma</code> - bends the tone curve to match how the material darkens with actual power (non-linear).</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 640 320" width="640" role="img" aria-label="Gamma curve mapping tone to power">
+        <g font-family="sans-serif">
+          <!-- axes -->
+          <path d="M70 260 H560" stroke="#4a5568" stroke-width="1.5"/>
+          <path d="M70 260 V40" stroke="#4a5568" stroke-width="1.5"/>
+          <text x="315" y="290" text-anchor="middle" font-size="12" fill="#4a5568">inverted tone t = v/255  (0 light → 1 dark)</text>
+          <text x="34" y="150" text-anchor="middle" font-size="12" fill="#4a5568" transform="rotate(-90 34 150)">power</text>
+
+          <!-- min/max power band -->
+          <rect x="70" y="70" width="490" height="150" fill="#eefaf0" opacity=".5"/>
+          <text x="565" y="75" font-size="10.5" fill="#16a34a" text-anchor="end">maxPower</text>
+          <text x="565" y="225" font-size="10.5" fill="#16a34a" text-anchor="end">minPower</text>
+          <path d="M70 70 H560" stroke="#b7e3c2" stroke-width="1" stroke-dasharray="3 3"/>
+          <path d="M70 220 H560" stroke="#b7e3c2" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- linear reference gamma = 1 -->
+          <path d="M70 220 L560 70" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 5"/>
+          <text x="420" y="128" font-size="11" fill="#8a94a6">gamma = 1 (linear)</text>
+
+          <!-- gamma > 1 curve (bends down early, favors low power longer) -->
+          <path d="M70 220 C 260 218, 420 190, 560 70" fill="none" stroke="#7c3aed" stroke-width="2.6"/>
+          <text x="230" y="205" font-size="11" fill="#7c3aed">gamma &gt; 1</text>
+
+          <!-- gamma < 1 curve (rises fast) -->
+          <path d="M70 220 C 150 110, 320 75, 560 70" fill="none" stroke="#2563eb" stroke-width="2.6"/>
+          <text x="150" y="150" font-size="11" fill="#2563eb">gamma &lt; 1</text>
+
+          <text x="70" y="252" font-size="11" fill="#8a94a6">0</text>
+          <text x="555" y="252" font-size="11" fill="#8a94a6">1</text>
+        </g>
+      </svg>
+      <figcaption>The gamma curve bends the tone→power mapping within the <code>[minPower, maxPower]</code> band. <code>gamma &gt; 1</code> keeps power low for longer (light strokes stay light); <code>gamma &lt; 1</code> ramps power up earlier (dark strokes bloom sooner). <code>gamma = 1</code> is a pure linear mapping.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Terminology</span>
+      <p><b>Power/PWM modulation</b> - modulating output power (usually via PWM) to the desired value at each point. <b>Gamma correction</b> - the power-law transform <code>t^gamma</code> that compensates for the non-linear response between control signal and observed darkness on the material.</p>
+    </div>
+
+    <h3>3.2 Dithering (1-bit) - Floyd&ndash;Steinberg</h3>
+    <p>For an on/off-only tool, or for a crisper look, convert to on/off dots that <em>approximate</em> tone through their density. <b>Floyd&ndash;Steinberg error diffusion</b>: threshold each cell to black/white, then push the quantisation error to the <em>not-yet-visited</em> neighbouring cells using the <code>7/16, 3/16, 5/16, 1/16</code> kernel:</p>
+
+    <pre><code><span class="kw">for</span> each cell (row-major):
+    old = buf[cell]; new = (old &lt; <span class="st">128</span>) ? <span class="st">0</span> : <span class="st">255</span>
+    err = old - new; buf[cell] = new
+    buf[right]       += err × <span class="st">7/16</span>
+    buf[below-left]  += err × <span class="st">3/16</span>
+    buf[below]       += err × <span class="st">5/16</span>
+    buf[below-right] += err × <span class="st">1/16</span></code></pre>
+
+    <p>Dithered cells are already 0/255, so they engrave at <b>full power</b> (no gamma applied). Other diffusion kernels (Atkinson, Jarvis) or ordered/Bayer dithering are alternative choices.</p>
+
+    <figure>
+      <svg viewBox="0 0 620 300" width="620" role="img" aria-label="Floyd-Steinberg error-diffusion kernel">
+        <g font-family="sans-serif">
+          <!-- grid of cells: current row and next row -->
+          <g stroke="#dfe5ee" stroke-width="1.5" fill="#fdfbf6">
+            <rect x="140" y="60" width="70" height="60"/>
+            <rect x="210" y="60" width="70" height="60"/>
+            <rect x="70"  y="120" width="70" height="60"/>
+            <rect x="140" y="120" width="70" height="60"/>
+            <rect x="210" y="120" width="70" height="60"/>
+          </g>
+          <!-- current pixel X -->
+          <rect x="140" y="60" width="70" height="60" fill="#eaf1ff" stroke="#2563eb" stroke-width="2.5"/>
+          <text x="175" y="96" text-anchor="middle" font-size="20" font-weight="800" fill="#1e49b8">X</text>
+
+          <text x="245" y="96" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">7/16</text>
+          <text x="105" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">3/16</text>
+          <text x="175" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">5/16</text>
+          <text x="245" y="156" text-anchor="middle" font-size="15" font-weight="700" fill="#6b3fb8">1/16</text>
+
+          <!-- arrows from X to neighbours -->
+          <g stroke="#7c3aed" stroke-width="1.8" fill="none" marker-end="url(#arFS)">
+            <path d="M210 90 H236"/>
+            <path d="M155 120 L120 132"/>
+            <path d="M175 120 V132"/>
+            <path d="M195 120 L230 132"/>
+          </g>
+
+          <text x="175" y="40" text-anchor="middle" font-size="12.5" fill="#8a94a6">cell X already quantised; error err = old - new</text>
+          <text x="175" y="205" text-anchor="middle" font-size="11.5" fill="#8a94a6">right, below-left, below, below-right - all "not yet visited" cells</text>
+
+          <text x="175" y="245" text-anchor="middle" font-size="12" fill="#4a5568">Visit order: row-major, left→right, top→bottom</text>
+          <path d="M100 265 H250" stroke="#94a3b8" stroke-width="2" marker-end="url(#arFS)"/>
+          <text x="60" y="269" font-size="11" fill="#8a94a6">start</text>
+        </g>
+        <defs>
+          <marker id="arFS" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#7c3aed"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>The quantisation error at cell X is spread to four neighbouring cells by fixed weights, always toward <em>not-yet-scanned</em> cells - so the error never feeds back into an already-processed cell.</figcaption>
+    </figure>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">Terminology</span>
+      <p><b>Error diffusion</b> - the technique of spreading quantisation error to nearby unprocessed samples so the local average tone is preserved. <b>Halftoning</b> - reproducing continuous tone through the density of binary dots, a concept originating in printing.</p>
+    </div>
+
+    <h2>4. Scanning: boustrophedon and run merge</h2>
+
+    <pre><code>leftToRight = <span class="st">true</span>
+<span class="kw">for</span> each row r:
+    compute power for every cell in the row
+    find firstBurn..lastBurn (<span class="cm"># skip a fully-white row, still flip direction</span>)
+    walk that span in the current direction:
+        merge a maximal RUN of cells with equal power
+        power &gt; <span class="st">0</span> → engaged working move to the run's end, at that power
+        power = <span class="st">0</span> → travel move over the gap (white/clipped cells)
+    leftToRight = !leftToRight       <span class="cm"># flip direction each row</span></code></pre>
+
+    <ul>
+      <li><b>Boustrophedon</b> - "ox-plough" back-and-forth rows, avoiding a return trip to the margin on every scan line.</li>
+      <li><b>Run-length merge</b> - collapses adjacent cells of equal power into <em>one</em> move, dramatically reducing the line count. Combined with modal power (<a href="08-machine-code.html">Chapter 8 §3</a>), a smooth gradient becomes a handful of moves per run instead of one per pixel.</li>
+      <li>Gaps (white or clipped) are traversed while <b>disengaged</b> (rapid), so masked regions are skipped rather than mistakenly engraved.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 700 300" width="700" role="img" aria-label="Boustrophedon scan with merged power runs">
+        <g font-family="sans-serif">
+          <!-- row 1: left to right -->
+          <text x="20" y="46" font-size="11" fill="#8a94a6">row 1 →</text>
+          <rect x="70" y="30" width="60" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="130" y="30" width="120" height="32" fill="#334155"/>
+          <rect x="250" y="30" width="180" height="32" fill="#64748b"/>
+          <rect x="430" y="30" width="90" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="520" y="30" width="80" height="32" fill="#334155"/>
+          <g stroke="#94a3b8" stroke-width="0.6"><path d="M70 30 V62 M600 30 V62"/></g>
+
+          <path d="M70 20 L130 20" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M130 20 L430 20" stroke="#2563eb" stroke-width="3"/>
+          <path d="M430 20 L520 20" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M520 20 L600 20" stroke="#2563eb" stroke-width="3"/>
+
+          <!-- row 2: right to left -->
+          <text x="20" y="110" font-size="11" fill="#8a94a6">row 2 ←</text>
+          <rect x="70" y="94" width="90" height="32" fill="#334155"/>
+          <rect x="160" y="94" width="150" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="310" y="94" width="200" height="32" fill="#64748b"/>
+          <rect x="510" y="94" width="90" height="32" fill="#334155"/>
+
+          <path d="M600 84 L510 84" stroke="#2563eb" stroke-width="3"/>
+          <path d="M510 84 L310 84" stroke="#2563eb" stroke-width="3"/>
+          <path d="M310 84 L160 84" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M160 84 L70 84" stroke="#2563eb" stroke-width="3"/>
+
+          <!-- row 3: left to right -->
+          <text x="20" y="174" font-size="11" fill="#8a94a6">row 3 →</text>
+          <rect x="70" y="158" width="200" height="32" fill="#94a3b8" opacity=".25"/>
+          <rect x="270" y="158" width="330" height="32" fill="#475569"/>
+
+          <path d="M70 148 L270 148" stroke="#94a3b8" stroke-width="3" stroke-dasharray="5 4"/>
+          <path d="M270 148 L600 148" stroke="#2563eb" stroke-width="3"/>
+
+          <text x="350" y="228" text-anchor="middle" font-size="12" fill="#4a5568">each gray block = one merged RUN (equal power) → one working move</text>
+          <text x="350" y="248" text-anchor="middle" font-size="12" fill="#4a5568">light/transparent block = white/clipped span → one travel move</text>
+
+          <rect x="130" y="266" width="16" height="16" fill="#334155"/>
+          <text x="152" y="279" font-size="11" fill="#4a5568">high power</text>
+          <rect x="260" y="266" width="16" height="16" fill="#64748b"/>
+          <text x="282" y="279" font-size="11" fill="#4a5568">medium power</text>
+          <rect x="430" y="266" width="16" height="16" fill="#94a3b8" opacity=".25"/>
+          <text x="452" y="279" font-size="11" fill="#4a5568">white/clipped (skip)</text>
+        </g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#2563eb"></i> Working move - one command for the whole run</span>
+        <span><i style="border-color:#94a3b8;border-top-style:dashed"></i> Travel - rapid over a skip span</span>
+      </div>
+      <figcaption>Three scan rows alternating direction (boustrophedon); each colored block is a <b>run</b> that merges adjacent cells of equal power into a single move, instead of emitting one move per pixel.</figcaption>
+    </figure>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Why run merge matters</span>
+      <p>Without merging, a 1000×1000-pixel image could produce a million individual moves. Run-length merge turns a smooth gradient into a small number of constant-power segments - the move count scales with the <em>number of power changes</em> per row, not with the pixel count.</p>
+    </div>
+
+    <h2>5. Dynamic power (M4) vs constant power (M3)</h2>
+    <p>For raster, prefer the controller's <b>dynamic power mode</b> (GRBL <code>M4</code>) over constant (<code>M3</code>): it scales beam power with the <em>actual feed rate</em>, keeping engraving density even through the acceleration/deceleration segments at each row's ends. Vector shapes typically use constant power (<code>M3</code>).</p>
+
+    <div class="kv">
+      <div><dt>M4 - dynamic power</dt><dd>Power scales with the instantaneous feed rate. Used for <b>raster</b>: the slower accel/decel segments at the start/end of a scan row still yield even engraving density, without "over-burning" at the ends.</dd></div>
+      <div><dt>M3 - constant power</dt><dd>Power stays fixed regardless of speed. Used for <b>vector</b> (chains): speed along a cut/draw path is usually controlled separately, so power doesn't need to compensate for feed rate.</dd></div>
+    </div>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Track modal state</span>
+      <p>Just like power and feed in Chapter 8, the M3/M4 mode is <b>modal state</b>: emit the mode-switch command only once when transitioning from a vector segment to a raster segment (or back), not on every scan row.</p>
+    </div>
+
+    <h2>6. Integration with the vector pipeline</h2>
+    <p>Raster bypasses chains and ordering, but it still lives <b>inside the same job</b> - don't let this bypass drop it out of the shared machinery:</p>
+
+    <div class="cards">
+      <div class="card"><h4>Coordinate transform</h4><p>Raster points go through the <em>same</em> world→machine <code>format()</code> transform as chains (<a href="08-machine-code.html">Chapter 8 §5</a>): sample in the image's local space, map local→world, then let the emitter apply the machine affine (home/mirror/rotate/rotary). Skipping this step lands the engraving in the wrong place or orientation.</p></div>
+      <div class="card"><h4>Per-layer sequencing</h4><p>Within a layer, emit the ordered vector chains <b>first</b>, then that layer's raster shapes (<a href="12-inputs-edge-cases.html">Chapter 12 §7</a>); carry the running position so the first raster row starts near where the vectors just ended.</p></div>
+      <div class="card"><h4>Passes</h4><p>Raster participates in the layer's pass count just like chains: re-emit the whole raster scan once per pass.</p></div>
+      <div class="card"><h4>Settings</h4><p>Raster uses the layer's power as the <em>max/on</em> level and the layer's feed rate; min-power/gamma/dither are the layer's own image controls (§3).</p></div>
+    </div>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Common mistake</span>
+      <p>Because raster "emits its own code," it's easy to accidentally miss the machine transform (home/mirror/rotary) that vector chains always pass through in Chapter 8. Reuse a single <code>format()</code> function for both paths - don't write a separate copy for raster.</p>
+    </div>
+
+    <h2>7. Not animated in preview</h2>
+    <p>Raster produces an enormous number of moves; don't feed them into the toolpath simulator. Instead, show raster as a static image overlay on the preview. The vector simulator then only animates chains, keeping the interface responsive (raster moves are emitted with no simulator index assigned).</p>
+
+    <div class="box good">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="box-t">General principle</span>
+      <p>The preview needs to be honest about output <em>shape</em>, not necessarily simulate <em>every single motion</em>. With tens of thousands of raster moves, a static overlay image conveys the right information at nearly zero cost.</p>
+    </div>
+
+    <h2>8. Checklist (AI generating a raster engraver)</h2>
+    <ul>
+      <li>Skip raster entirely for non-modulating tools (pen/blade).</li>
+      <li>Scan step = max(interval, one source pixel); cap total cell count and coarsen if needed (with a note).</li>
+      <li>Sample cell centers in the image's local space; honour the clip mask.</li>
+      <li>Tone: grayscale+gamma into <code>[minPower, maxPower]</code>, OR Floyd&ndash;Steinberg dither to 1-bit.</li>
+      <li>Scan boustrophedon; merge equal-power runs; working move over engraved spans, travel over gaps (GRBL <code>G1</code>/<code>G0</code>).</li>
+      <li>Use dynamic power (M4) for even tone; track modal power/feed.</li>
+      <li>Keep raster out of the animated simulator.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="08-machine-code.html"><div class="dir">← Previous</div><div class="ttl">8 · Machine-Code Emission</div></a>
+      <a class="next" href="10-curve-fidelity.html"><div class="dir">Next chapter →</div><div class="ttl">10 · Curve Fidelity &amp; Continuity</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8 · Machine-Code Emission - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a class="active" href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 8 · Emission</span>
+    <h1>Machine-Code Emission</h1>
+    <p class="lead">This is the <b>only</b> stage that knows about a specific machine language. It takes the ordered chain list (<a href="07-toolpath-ordering.html">Chapter 7</a>) and serialises it into a concrete command language - GRBL G-code, HPGL, Marlin, and so on. Everything upstream is entirely machine-neutral; everything machine-specific lives here, and only here.</p>
+
+    <h2>1. The emitter interface</h2>
+    <p>Model the emitter as a small set of operations. Each dialect (concrete machine language) implements every operation; the driver loop calls them uniformly, with no idea which machine it is talking to:</p>
+
+    <pre><code><span class="kw">interface</span> Emitter:
+    <span class="fn">preamble</span>()                       <span class="cm"># units, absolute mode, tool init, return home</span>
+    <span class="fn">travelTo</span>(point)                  <span class="cm"># move while the tool is DISENGAGED (rapid)</span>
+    <span class="fn">engage</span>([power])                  <span class="cm"># pen down / laser on / blade down</span>
+    <span class="fn">workTo</span>(point[, power])           <span class="cm"># move while the tool is ENGAGED</span>
+    <span class="fn">disengage</span>()                      <span class="cm"># pen up / laser off / blade up</span>
+    <span class="fn">setFeed</span>(rate)                    <span class="cm"># working speed (if the dialect has it)</span>
+    <span class="fn">comment</span>(text)                    <span class="cm"># human annotation (if the dialect supports it)</span>
+    <span class="fn">postamble</span>()                      <span class="cm"># disengage tool, return home, end</span>
+    <span class="fn">format</span>(point) -> string          <span class="cm"># world→machine transform + unit scaling</span></code></pre>
+
+    <p>The driver loop is <b>identical</b> for every dialect:</p>
+
+    <pre><code><span class="fn">preamble</span>()
+cur = home
+<span class="kw">for</span> each group:
+    <span class="fn">setGroupParams</span>(power, feed, force, passes)
+    <span class="kw">for</span> pass <span class="kw">in</span> 1..passes:
+        <span class="kw">for</span> chain <span class="kw">in</span> <span class="fn">orderedChains</span>(group):
+            <span class="kw">if</span> <span class="fn">dist</span>(cur, chain.first) > ε:
+                <span class="fn">disengage</span>(); <span class="fn">travelTo</span>(chain.first)
+            <span class="fn">engage</span>(power)
+            <span class="kw">for</span> p <span class="kw">in</span> chain[1:]: <span class="fn">workTo</span>(p[, power])
+            cur = chain.last
+<span class="fn">postamble</span>()</code></pre>
+
+    <p>Only <code>preamble</code>/<code>travelTo</code>/<code>engage</code>/<code>workTo</code>/<code>disengage</code>/<code>format</code> differ between dialects. Everything else - modal state, group ordering, pass count - only needs to be written once.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 320" width="720" role="img" aria-label="Emitter architecture: one shared driver loop, dialects differ only in a handful of functions">
+        <rect x="140" y="16" width="440" height="64" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+        <text x="360" y="40" text-anchor="middle" font-size="14" font-weight="700" fill="#9be59b" font-family="sans-serif">Driver loop (SINGLE, SHARED)</text>
+        <text x="360" y="60" text-anchor="middle" font-size="11.5" fill="#d6e2ff" font-family="sans-serif">preamble → travel/engage/work/disengage per chain → postamble</text>
+
+        <path d="M280 80 L160 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+        <path d="M360 80 L360 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+        <path d="M440 80 L560 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+
+        <g font-family="sans-serif">
+          <rect x="40" y="130" width="220" height="120" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="150" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">GRBL (G-code)</text>
+          <text x="150" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="150" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="150" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="150" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">G0/G1, M3/M4/M5, S</text>
+
+          <rect x="250" y="130" width="220" height="120" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="360" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">HPGL (Basic)</text>
+          <text x="360" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="360" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="360" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="360" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">PU/PD collapse engage, IN;</text>
+
+          <rect x="460" y="130" width="220" height="120" rx="10" fill="#eefaf0" stroke="#b7e3c2"/>
+          <text x="570" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Marlin-ish</text>
+          <text x="570" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="570" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="570" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="570" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">G0/G1, M3/M5, servo</text>
+        </g>
+
+        <text x="360" y="288" text-anchor="middle" font-size="11.5" fill="#8a94a6" font-family="sans-serif">setFeed &amp; comment: same meaning in every dialect - only the syntax differs</text>
+        <defs>
+          <marker id="arE1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>The driver loop is written once, ever. Each dialect only needs to plug in six functions: <code>preamble</code>, <code>travelTo</code>, <code>engage</code>, <code>workTo</code>, <code>disengage</code>, <code>format</code>.</figcaption>
+    </figure>
+
+    <h2>2. The dialect mapping table</h2>
+    <p>For three representative dialects, here is how each abstract operation translates to a concrete command:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Operation</th><th>GRBL (G-code)</th><th>Basic HPGL</th><th>Marlin-ish</th></tr></thead>
+      <tbody>
+        <tr><td>units / init</td><td><code>G21 G90</code></td><td><code>IN;</code></td><td><code>G21 G90</code></td></tr>
+        <tr><td>travel (disengaged)</td><td><code>G0 X.. Y..</code></td><td><code>PU x,y;</code></td><td><code>G0 X.. Y..</code></td></tr>
+        <tr><td>engage</td><td><code>M3 S..</code> (vector) / <code>M4 S..</code> (raster)</td><td>- (no separate command)</td><td><code>M3</code> / servo down</td></tr>
+        <tr><td>work (engaged)</td><td><code>G1 X.. Y.. [F..]</code></td><td><code>PD x,y;</code></td><td><code>G1 X.. Y..</code></td></tr>
+        <tr><td>disengage</td><td><code>M5</code></td><td><code>PU;</code></td><td><code>M5</code> / servo up</td></tr>
+        <tr><td>power/force</td><td><code>S</code> word, <code>0 .. $30</code></td><td><code>FS</code> (force), <code>VS</code> (speed)</td><td><code>S</code> / servo angle</td></tr>
+        <tr><td>return home</td><td><code>G0 X0 Y0</code></td><td><code>PU 0,0;</code></td><td><code>G0 X0 Y0</code></td></tr>
+        <tr><td>comment</td><td><code>; text</code></td><td><em>(none - see §6)</em></td><td><code>; text</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">HPGL has no distinct "engage" command</span>
+      <p>In HPGL, pen-down <em>is</em> the working move: <code>PD x,y;</code> lowers the pen (if raised) <b>and</b> draws to <code>x,y</code>; <code>PU x,y;</code> raises the pen <b>and</b> travels there. So the abstract <code>engage</code> + <code>workTo</code> collapse into a single <code>PD</code> command - and, symmetrically, <code>disengage</code> + <code>travelTo</code> collapse into a single <code>PU</code> command. In the driver loop, model HPGL's <code>engage</code>/<code>disengage</code> as <b>state-only no-ops</b> (they emit nothing); the actual pen up/down rides the next <code>PU</code>/<code>PD</code> coordinate command. The modal bool tracker still produces the correct <code>PU</code>(travel) → <code>PD</code>(work) sequence.</p>
+    </div>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">GRBL laser mode</span>
+      <p>Enable <code>$32=1</code> so the beam only fires during motion. Set power <code>S</code> on the <code>M3</code>/<code>M4</code> that <em>begins</em> a working run (it takes effect on the following move); never leave the laser on across a <code>G0</code> travel. <code>G0</code> travels use the controller's rapid rate - do not attach a working <code>F</code> to them (feed applies only to <code>G1</code>).</p>
+      <p><b>GRBL's <code>S</code> range is <code>0 .. $30</code></b>, where <code>$30</code> is the controller's <em>configured max-spindle-speed</em> setting (the value corresponding to 100% power - commonly <code>1000</code>). This is <b>not</b> a fixed ceiling of 30. The formula from percent power to <code>S</code> is: <code>S = round(power% / 100 × $30)</code>.</p>
+      <p><b>GRBL engage mode:</b> use <code>M3</code> (constant power) for vector working moves, and <code>M4</code> (dynamic power, beam scales with actual speed) for raster (see <a href="09-raster-engraving.html">Chapter 9 §5</a>).</p>
+    </div>
+
+    <p>This abstraction holds because all these machines share the same engage/travel/work/disengage model (see <a href="00-introduction.html">Chapter 0 §1</a>).</p>
+
+    <h2>3. Modal state tracking (never emit redundant commands)</h2>
+    <p>Most controllers are <b>modal</b>: a setting persists until it is changed. Track it and emit a command only when something actually changes:</p>
+
+    <ul>
+      <li><b>Engage state.</b> Keep an <code>engaged</code> bool. Only emit <code>engage</code> when going disengaged→engaged, only emit <code>disengage</code> when going engaged→disengaged. Redundant toggles waste time and can dwell the tool.</li>
+      <li><b>Power (S).</b> Track <code>lastPower</code>; omit the <code>S</code> word on a working move that keeps the same power. (Essential for raster, <a href="09-raster-engraving.html">Chapter 9</a>, where power changes per scanline.)</li>
+      <li><b>Feed (F).</b> Emit once per group (it is modal); re-emit when a group's feed differs from the previous group's.</li>
+      <li><b>Coordinates.</b> Some dialects allow omitting an unchanged axis; usually not worth the added complexity - just emit both X and Y.</li>
+    </ul>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Why this matters, beyond aesthetics</span>
+      <p>Shorter lines pack more moves into the controller's receive buffer, giving the planner deeper look-ahead and smoother motion on dense paths (see <a href="10-curve-fidelity.html">Chapter 10</a> and <a href="11-performance.html">Chapter 11</a>). Trimming coordinate precision helps too (§4).</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 340" width="680" role="img" aria-label="Comparing emitted code before and after modal state tracking">
+        <text x="170" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">✗ Before - re-emit every command</text>
+        <text x="510" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">✓ After - emit only on change</text>
+
+        <rect x="20" y="40" width="300" height="280" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+        <rect x="360" y="40" width="300" height="280" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+
+        <g font-family="ui-monospace,monospace" font-size="13">
+          <text x="40" y="75" fill="#d6e2ff">M3 S500</text>
+          <text x="40" y="103" fill="#d6e2ff">G1 X10 Y10 F800</text>
+          <text x="40" y="131" fill="#7d8aa8" text-decoration="line-through">G1 X20 Y15 F800</text>
+          <text x="40" y="159" fill="#7d8aa8" text-decoration="line-through">G1 X30 Y10 F800</text>
+          <text x="40" y="187" fill="#7d8aa8" text-decoration="line-through">M3 S500</text>
+          <text x="40" y="215" fill="#7d8aa8" text-decoration="line-through">G1 X40 Y20 F800</text>
+          <text x="40" y="255" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">Strikethrough = redundant word/command</text>
+          <text x="40" y="273" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">(F800 and S500 repeat</text>
+          <text x="40" y="289" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">while state has not changed)</text>
+
+          <text x="380" y="75" fill="#9be59b">G1 F800</text>
+          <text x="380" y="103" fill="#9be59b">M3 S500</text>
+          <text x="380" y="131" fill="#d6e2ff">G1 X10 Y10</text>
+          <text x="380" y="159" fill="#d6e2ff">G1 X20 Y15</text>
+          <text x="380" y="187" fill="#d6e2ff">G1 X30 Y10</text>
+          <text x="380" y="215" fill="#d6e2ff">G1 X40 Y20</text>
+          <text x="380" y="255" fill="#9be59b" font-size="11.5" font-family="sans-serif">F and S emitted only once -</text>
+          <text x="380" y="273" fill="#9be59b" font-size="11.5" font-family="sans-serif">when the value actually changes</text>
+        </g>
+      </svg>
+      <figcaption>The same motion, but the right column is noticeably shorter thanks to tracking <code>engaged</code>, <code>lastPower</code> and <code>feed</code>, then emitting a command only on a genuine change.</figcaption>
+    </figure>
+
+    <h2>4. Coordinate formatting</h2>
+    <ul>
+      <li><b>Precision:</b> emit at most ~3 decimals (micrometre scale) and <b>strip trailing zeros</b> (<code>12.500 → 12.5</code>, <code>7.000 → 7</code>). Parsers read the short form identically, and shorter lines stream better. Normalise <code>-0 → 0</code>.</li>
+      <li><b>Unit scaling:</b> apply the machine's unit. GRBL/Marlin use mm directly; basic HPGL uses <b>plotter units</b> = <code>1016/25.4 ≈ 40 units/mm</code> (1 unit = 1/1016 inch) and integer coordinates, so round after scaling.</li>
+      <li><b>Do this once, at the end.</b> <code>format()</code> applies the world→machine transform (§5) and the unit scale to each point, exactly at emission time - never earlier.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Coordinate formatting pipeline: trim precision then scale to the machine's unit">
+        <g font-family="sans-serif">
+          <rect x="16" y="30" width="190" height="110" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="111" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#d6e2ff">Machine coordinate (float)</text>
+          <text x="34" y="78" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">x = 12.500000</text>
+          <text x="34" y="100" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">y = -0.000004</text>
+          <text x="34" y="122" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">z = 7.000000</text>
+
+          <path d="M206 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE2)"/>
+
+          <rect x="236" y="30" width="210" height="110" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="341" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#d6e2ff">Trim ~3 decimals · strip zeros</text>
+          <text x="254" y="78" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">12.5</text>
+          <text x="254" y="100" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">0  <tspan fill="#8a94a6">(−0 → 0)</tspan></text>
+          <text x="254" y="122" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">7</text>
+
+          <path d="M446 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE2)"/>
+
+          <rect x="476" y="10" width="228" height="60" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="590" y="30" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1e49b8">GRBL/Marlin - keep mm</text>
+          <text x="590" y="52" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" fill="#1e49b8">G1 X12.5 Y0</text>
+
+          <rect x="476" y="100" width="228" height="60" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="590" y="120" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b3fb8">HPGL - ×40 units/mm, round</text>
+          <text x="590" y="142" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" fill="#6b3fb8">PD 500,0;</text>
+
+          <path d="M446 60 L 476 40" stroke="#94a3b8" stroke-width="1.6"/>
+          <path d="M446 110 L 476 130" stroke="#94a3b8" stroke-width="1.6"/>
+        </g>
+        <text x="360" y="200" text-anchor="middle" font-size="12" fill="#8a94a6" font-family="sans-serif">format(point) does both jobs - trim precision and scale units - exactly once, at emission</text>
+        <defs>
+          <marker id="arE2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Example: <code>12.500000</code> → <code>12.5</code>; <code>-0.000004</code> → <code>0</code>; for HPGL, <code>12.5mm</code> multiplied by <code>40 units/mm</code> then rounded to the integer <code>500</code>.</figcaption>
+    </figure>
+
+    <h2>5. World → machine coordinate transform</h2>
+    <p>Design space (world) and machine space rarely coincide. Compose a small affine transform, applied inside <code>format()</code>:</p>
+
+    <ul>
+      <li><b>Home corner / axis direction.</b> Translate + flip so the origin is the machine's home and the axes point the way the hardware expects. (Example: design +Y points down, machine +Y points up ⇒ <code>y' = boardH − y</code>.)</li>
+      <li><b>Mirroring.</b> Some devices home at one side with an inherent reflection (e.g. a cutter homing at the right with +X running left). <b>Pre-mirror</b> in the emitter to cancel it out (<code>x' = boardW − x</code>) so the output isn't reversed. A separate, user-facing "mirror" toggle (for iron-on/HTV) is applied <em>before</em> this step, affecting only the emitted text - not the preview.</li>
+      <li><b>Rotation.</b> To fit portrait artwork onto a landscape bed, or vice versa, rotate the whole job (e.g. 90° clockwise: <code>(x,y) → (y, −x)</code>, then re-anchor to the positive quadrant).</li>
+      <li><b>Rotary wrapping.</b> If one axis is a rotary attachment, convert that axis' linear length (mm) into <b>degrees</b>: <code>deg = mm / mmPerRev × 360</code>, and emit it on the rotary axis letter (e.g. replace <code>Y</code> with <code>A</code>), leaving the remaining linear axis unchanged.</li>
+    </ul>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Keep home moves in raw machine coordinates</span>
+      <p>Moves that return home must stay in <b>raw machine coordinates</b> (not user-mirrored) so that "home" is always the device's true origin. Preview parity: keep the simulator in <b>world</b> space (readable to the user); only the emitted text carries these transforms (see <a href="01-architecture.html">Chapter 1 §8-9</a>).</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 560" width="720" role="img" aria-label="Four world-to-machine transforms: axis flip for home, mirror, 90-degree rotation, rotary wrapping">
+        <g font-family="sans-serif">
+          <!-- a: home/flip -->
+          <text x="180" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">a) Home corner &amp; axis flip</text>
+          <rect x="30" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="90" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">World (Y down)</text>
+          <path d="M30 40 v120" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arAy)"/>
+          <path d="M30 160 h120" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arAx)"/>
+          <circle cx="100" cy="80" r="5" fill="#7c3aed"/>
+          <text x="108" y="76" font-size="10" fill="#7c3aed">P(x,y)</text>
+
+          <path d="M170 100 L200 100" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="210" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="270" y="174" text-anchor="middle" font-size="10" fill="#8a94a6">Machine (Y up, home bottom-left)</text>
+          <path d="M210 160 v-120" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arAy)"/>
+          <path d="M210 160 h120" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arAx)"/>
+          <circle cx="280" cy="120" r="5" fill="#7c3aed"/>
+          <text x="288" y="130" font-size="10" fill="#7c3aed">P'(x,y')</text>
+          <text x="180" y="205" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">y' = boardH − y</text>
+
+          <!-- b: mirror -->
+          <text x="540" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">b) Mirroring</text>
+          <rect x="410" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <path d="M420 60 L470 60 L470 140" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <text x="470" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">World</text>
+          <text x="470" y="30" text-anchor="middle" font-size="0" fill="#8a94a6"></text>
+
+          <path d="M540 100 L570 100" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="590" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <path d="M680 60 L630 60 L630 140" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <text x="650" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">Machine (home right)</text>
+          <text x="540" y="205" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">x' = boardW − x</text>
+
+          <!-- c: rotate -->
+          <text x="180" y="316" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">c) 90° rotation (portrait → landscape)</text>
+          <rect x="60" y="330" width="70" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="95" y="324" text-anchor="middle" font-size="10" fill="#8a94a6">World (portrait)</text>
+          <circle cx="95" cy="360" r="4" fill="#7c3aed"/>
+
+          <path d="M140 390 L170 390" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="185" y="365" width="120" height="70" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="245" y="324" text-anchor="middle" font-size="10" fill="#8a94a6">Machine (landscape)</text>
+          <circle cx="215" cy="400" r="4" fill="#7c3aed"/>
+          <text x="180" y="480" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">(x,y) → (y, −x), re-anchor positive</text>
+
+          <!-- d: rotary -->
+          <text x="540" y="316" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">d) Rotary wrapping</text>
+          <line x1="420" y1="380" x2="560" y2="380" stroke="#2563eb" stroke-width="2"/>
+          <text x="490" y="370" text-anchor="middle" font-size="10" fill="#8a94a6">linear axis (mm)</text>
+          <path d="M420 380 L440 375 M420 380 L440 385" stroke="#2563eb" stroke-width="1.4" fill="none"/>
+
+          <path d="M540 390 L570 390" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <circle cx="650" cy="400" r="40" fill="none" stroke="#16a34a" stroke-width="2"/>
+          <path d="M650 400 L650 360" stroke="#16a34a" stroke-width="1.6"/>
+          <path d="M650 400 L685 420" stroke="#7c3aed" stroke-width="1.6" marker-end="url(#arE3)"/>
+          <text x="650" y="335" text-anchor="middle" font-size="10" fill="#8a94a6">rotary axis (deg)</text>
+          <text x="540" y="480" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">deg = mm / mmPerRev × 360</text>
+        </g>
+        <defs>
+          <marker id="arAx" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5568"/></marker>
+          <marker id="arAy" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5568"/></marker>
+          <marker id="arE3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Four common transforms when moving world coordinates into machine space: flipping per home corner, mirroring to cancel hardware reflection, rotating to fit the bed, and wrapping a rotary axis into degrees.</figcaption>
+    </figure>
+
+    <h2>6. Preamble, postamble &amp; comments</h2>
+    <ul>
+      <li><b>Preamble:</b> set units + absolute positioning mode, initialise the tool (force/speed/power/pen select), and move to home.</li>
+      <li><b>Postamble:</b> disengage the tool, return home, deselect/end.</li>
+      <li><b>Comments/annotations:</b> dialects with a comment syntax (G-code <code>;</code>) can carry human-readable notes (layer names, settings, coarsening warnings). Dialects <b>without</b> comments (basic HPGL) must be sent only <b>bare commands</b> - so keep annotations as a separate, clearly-marked list, and <b>strip</b> them before streaming to the device (e.g. drop any line starting with <code>;</code> or any blank line). Never send a comment to a machine that can't parse one.</li>
+    </ul>
+
+    <h2>7. Passes &amp; groups</h2>
+    <ul>
+      <li><b>Passes:</b> repeat a group's <em>already-ordered</em> chains N times for thick material or a bolder mark. Order once, repeat the result.</li>
+      <li><b>Groups (layers/tools):</b> emit as contiguous blocks, each carrying its own power/feed/force/interval. Order within a group; keep position continuous across groups (see <a href="07-toolpath-ordering.html">Chapter 7 §5</a>).</li>
+    </ul>
+
+    <h2>8. Checklist (when an AI generates an emitter)</h2>
+    <ul>
+      <li>Implement the <code>Emitter</code> interface; keep the driver loop dialect-free.</li>
+      <li>Track engage/power/feed modal state; emit only on change.</li>
+      <li>Format coordinates: trim precision + strip trailing zeros, scale to device units.</li>
+      <li>Apply the world→machine affine (home/mirror/rotate/rotary) only inside <code>format()</code>; keep home moves in raw machine coordinates.</li>
+      <li>Emit preamble + postamble; strip comments for dialects that don't support them.</li>
+      <li>Repeat ordered chains for passes; emit groups contiguously with their settings.</li>
+      <li>Drive the simulator from the same ordered chain list, in world space.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="07-toolpath-ordering.html"><div class="dir">← Previous</div><div class="ttl">7 · Toolpath Ordering</div></a>
+      <a class="next" href="09-raster-engraving.html"><div class="dir">Next chapter →</div><div class="ttl">9 · Raster Engraving</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

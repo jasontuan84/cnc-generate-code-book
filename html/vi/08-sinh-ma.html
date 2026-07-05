@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>8 · Sinh mã máy - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a class="active" href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 8 · Phát mã</span>
+    <h1>Sinh mã máy</h1>
+    <p class="lead">Đây là giai đoạn <b>duy nhất</b> biết đến ngôn ngữ máy cụ thể. Nó lấy danh sách chuỗi đã được sắp xếp thứ tự (<a href="07-sap-xep.html">Chương 7</a>) và tuần tự hoá thành một ngôn ngữ lệnh cụ thể - G-code GRBL, HPGL, Marlin, v.v. Mọi thứ ở thượng nguồn hoàn toàn trung lập với máy; mọi thứ đặc thù cho máy sống ở đây, và chỉ ở đây.</p>
+
+    <h2>1. Giao diện bộ phát mã (Emitter)</h2>
+    <p>Mô hình hoá bộ phát mã như một tập nhỏ các thao tác. Mỗi dialect (ngôn ngữ máy cụ thể) triển khai từng thao tác này; vòng lặp điều phối (driver loop) gọi chúng một cách đồng nhất, không cần biết đang nói chuyện với máy nào:</p>
+
+    <pre><code><span class="kw">interface</span> Emitter:
+    <span class="fn">preamble</span>()                       <span class="cm"># đơn vị, chế độ tuyệt đối, khởi tạo công cụ, về home</span>
+    <span class="fn">travelTo</span>(point)                  <span class="cm"># di chuyển khi công cụ NHẢ (rapid)</span>
+    <span class="fn">engage</span>([power])                  <span class="cm"># hạ bút / bật laser / hạ dao</span>
+    <span class="fn">workTo</span>(point[, power])           <span class="cm"># di chuyển khi công cụ ĂN</span>
+    <span class="fn">disengage</span>()                      <span class="cm"># nâng bút / tắt laser / nâng dao</span>
+    <span class="fn">setFeed</span>(rate)                    <span class="cm"># tốc độ làm việc (nếu dialect có)</span>
+    <span class="fn">comment</span>(text)                    <span class="cm"># ghi chú cho người đọc (nếu dialect hỗ trợ)</span>
+    <span class="fn">postamble</span>()                      <span class="cm"># nhả công cụ, về home, kết thúc</span>
+    <span class="fn">format</span>(point) -> string          <span class="cm"># biến đổi world→machine + co giãn đơn vị</span></code></pre>
+
+    <p>Vòng lặp điều phối thì <b>giống hệt nhau</b> cho mọi dialect:</p>
+
+    <pre><code><span class="fn">preamble</span>()
+cur = home
+<span class="kw">for</span> each group:
+    <span class="fn">setGroupParams</span>(power, feed, force, passes)
+    <span class="kw">for</span> pass <span class="kw">in</span> 1..passes:
+        <span class="kw">for</span> chain <span class="kw">in</span> <span class="fn">orderedChains</span>(group):
+            <span class="kw">if</span> <span class="fn">dist</span>(cur, chain.first) > ε:
+                <span class="fn">disengage</span>(); <span class="fn">travelTo</span>(chain.first)
+            <span class="fn">engage</span>(power)
+            <span class="kw">for</span> p <span class="kw">in</span> chain[1:]: <span class="fn">workTo</span>(p[, power])
+            cur = chain.last
+<span class="fn">postamble</span>()</code></pre>
+
+    <p>Chỉ <code>preamble</code>/<code>travelTo</code>/<code>engage</code>/<code>workTo</code>/<code>disengage</code>/<code>format</code> khác nhau giữa các dialect. Phần còn lại - trạng thái modal, thứ tự nhóm, số lượt - chỉ cần viết một lần.</p>
+
+    <figure>
+      <svg viewBox="0 0 720 320" width="720" role="img" aria-label="Kiến trúc bộ phát mã: vòng lặp driver dùng chung, dialect chỉ khác vài hàm">
+        <rect x="140" y="16" width="440" height="64" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+        <text x="360" y="40" text-anchor="middle" font-size="14" font-weight="700" fill="#9be59b" font-family="sans-serif">Vòng lặp driver (DUY NHẤT)</text>
+        <text x="360" y="60" text-anchor="middle" font-size="11.5" fill="#d6e2ff" font-family="sans-serif">preamble → travel/engage/work/disengage theo từng chuỗi → postamble</text>
+
+        <path d="M280 80 L160 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+        <path d="M360 80 L360 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+        <path d="M440 80 L560 130" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE1)"/>
+
+        <g font-family="sans-serif">
+          <rect x="40" y="130" width="220" height="120" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="150" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#1e49b8">GRBL (G-code)</text>
+          <text x="150" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="150" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="150" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="150" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">G0/G1, M3/M4/M5, S</text>
+
+          <rect x="250" y="130" width="220" height="120" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="360" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#6b3fb8">HPGL (Basic)</text>
+          <text x="360" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="360" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="360" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="360" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">PU/PD gộp engage, IN;</text>
+
+          <rect x="460" y="130" width="220" height="120" rx="10" fill="#eefaf0" stroke="#b7e3c2"/>
+          <text x="570" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a">Marlin-ish</text>
+          <text x="570" y="172" text-anchor="middle" font-size="11" fill="#4a5568">preamble · travelTo</text>
+          <text x="570" y="188" text-anchor="middle" font-size="11" fill="#4a5568">engage · workTo</text>
+          <text x="570" y="204" text-anchor="middle" font-size="11" fill="#4a5568">disengage · format</text>
+          <text x="570" y="228" text-anchor="middle" font-size="10" fill="#8a94a6">G0/G1, M3/M5, servo</text>
+        </g>
+
+        <text x="360" y="288" text-anchor="middle" font-size="11.5" fill="#8a94a6" font-family="sans-serif">setFeed &amp; comment: cùng ý nghĩa ở mọi dialect - chỉ khác cú pháp</text>
+        <defs>
+          <marker id="arE1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Vòng lặp driver được viết một lần duy nhất. Mỗi dialect chỉ cần cắm vào sáu hàm: <code>preamble</code>, <code>travelTo</code>, <code>engage</code>, <code>workTo</code>, <code>disengage</code>, <code>format</code>.</figcaption>
+    </figure>
+
+    <h2>2. Bảng ánh xạ dialect</h2>
+    <p>Với ba dialect tiêu biểu, đây là cách mỗi thao tác trừu tượng dịch sang lệnh cụ thể:</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Thao tác</th><th>GRBL (G-code)</th><th>Basic HPGL</th><th>Marlin-ish</th></tr></thead>
+      <tbody>
+        <tr><td>đơn vị / khởi tạo</td><td><code>G21 G90</code></td><td><code>IN;</code></td><td><code>G21 G90</code></td></tr>
+        <tr><td>di chuyển (nhả)</td><td><code>G0 X.. Y..</code></td><td><code>PU x,y;</code></td><td><code>G0 X.. Y..</code></td></tr>
+        <tr><td>engage</td><td><code>M3 S..</code> (vector) / <code>M4 S..</code> (raster)</td><td>- (không có lệnh riêng)</td><td><code>M3</code> / servo hạ</td></tr>
+        <tr><td>làm việc (ăn)</td><td><code>G1 X.. Y.. [F..]</code></td><td><code>PD x,y;</code></td><td><code>G1 X.. Y..</code></td></tr>
+        <tr><td>disengage</td><td><code>M5</code></td><td><code>PU;</code></td><td><code>M5</code> / servo nâng</td></tr>
+        <tr><td>công suất/lực</td><td>từ <code>S</code>, <code>0 .. $30</code></td><td><code>FS</code> (lực), <code>VS</code> (tốc độ)</td><td><code>S</code> / góc servo</td></tr>
+        <tr><td>về home</td><td><code>G0 X0 Y0</code></td><td><code>PU 0,0;</code></td><td><code>G0 X0 Y0</code></td></tr>
+        <tr><td>chú thích</td><td><code>; text</code></td><td><em>(không có - xem §6)</em></td><td><code>; text</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="box term">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 012-2h12v16H6a2 2 0 00-2 2z"/><path d="M18 3v14"/></svg>
+      <span class="box-t">HPGL không có lệnh "engage" riêng</span>
+      <p>Với HPGL, hạ bút <em>chính là</em> nét làm việc: <code>PD x,y;</code> hạ bút (nếu đang nâng) <b>và</b> vẽ tới <code>x,y</code>; <code>PU x,y;</code> nâng bút <b>và</b> di chuyển tới đó. Vì vậy <code>engage</code> + <code>workTo</code> trừu tượng gộp lại thành một lệnh <code>PD</code> duy nhất - và đối xứng, <code>disengage</code> + <code>travelTo</code> gộp thành một lệnh <code>PU</code> duy nhất. Trong vòng lặp driver, mô hình hoá <code>engage</code>/<code>disengage</code> của HPGL như <b>no-op chỉ đổi trạng thái</b> (không phát ra gì); việc nâng/hạ bút thật sự đi kèm theo lệnh toạ độ <code>PU</code>/<code>PD</code> kế tiếp. Bộ theo dõi bool modal vẫn cho ra đúng trình tự <code>PU</code>(di chuyển) → <code>PD</code>(làm việc).</p>
+    </div>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Chế độ laser của GRBL</span>
+      <p>Bật <code>$32=1</code> để chùm tia chỉ phát trong lúc di chuyển. Đặt công suất <code>S</code> trên lệnh <code>M3</code>/<code>M4</code> <em>bắt đầu</em> một đoạn làm việc (nó có hiệu lực từ chuyển động kế tiếp); không bao giờ để laser bật xuyên qua một nét <code>G0</code>. Nét <code>G0</code> dùng tốc độ rapid của bộ điều khiển - đừng gắn <code>F</code> làm việc lên chúng (feed chỉ áp dụng cho <code>G1</code>).</p>
+      <p><b>Dải giá trị <code>S</code> của GRBL là <code>0 .. $30</code></b>, trong đó <code>$30</code> là thiết lập <em>tốc độ trục chính tối đa được cấu hình</em> của bộ điều khiển (giá trị ứng với 100% công suất - thường gặp là <code>1000</code>). Đây <b>không phải</b> một trần cố định bằng 30. Công thức từ phần trăm công suất sang <code>S</code>: <code>S = round(power% / 100 × $30)</code>.</p>
+      <p><b>Chế độ engage của GRBL:</b> dùng <code>M3</code> (công suất hằng định) cho nét làm việc dạng vector, và <code>M4</code> (công suất động, chùm tia co giãn theo tốc độ thực) cho raster (xem <a href="09-raster.html">Chương 9 §5</a>).</p>
+    </div>
+
+    <p>Sự trừu tượng này đứng vững vì tất cả các máy này đều chia sẻ chung một mô hình engage/travel/work/disengage (xem <a href="00-gioi-thieu.html">Chương 0 §1</a>).</p>
+
+    <h2>3. Theo dõi trạng thái modal (không bao giờ phát lệnh dư thừa)</h2>
+    <p>Hầu hết bộ điều khiển là <b>modal</b>: một thiết lập tồn tại đến khi bị thay đổi. Theo dõi nó và chỉ phát lệnh khi có thay đổi:</p>
+
+    <ul>
+      <li><b>Trạng thái engage.</b> Giữ một bool <code>engaged</code>. Chỉ phát <code>engage</code> khi chuyển từ nhả→ăn, chỉ phát <code>disengage</code> khi chuyển từ ăn→nhả. Bật/tắt dư thừa lãng phí thời gian và có thể làm công cụ dừng khựng (dwell).</li>
+      <li><b>Công suất (S).</b> Theo dõi <code>lastPower</code>; bỏ từ khoá <code>S</code> trên một nét làm việc giữ nguyên công suất. (Thiết yếu cho raster, <a href="09-raster.html">Chương 9</a>, nơi công suất đổi theo từng dòng quét.)</li>
+      <li><b>Tốc độ (F).</b> Phát một lần cho mỗi nhóm (nó là modal); phát lại khi tốc độ của nhóm khác với nhóm trước.</li>
+      <li><b>Toạ độ.</b> Một số dialect cho phép bỏ trục không đổi; thường không đáng để thêm phức tạp - cứ phát cả X lẫn Y.</li>
+    </ul>
+
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Vì sao điều này quan trọng, ngoài chuyện thẩm mỹ</span>
+      <p>Dòng lệnh ngắn hơn nhồi được nhiều chuyển động hơn vào bộ đệm nhận của bộ điều khiển, cho phép planner nhìn xa hơn (look-ahead) và chuyển động mượt hơn trên các đường dày đặc (xem <a href="10-do-muot.html">Chương 10</a> và <a href="11-hieu-nang.html">Chương 11</a>). Cắt bớt độ chính xác toạ độ cũng góp phần (§4).</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 340" width="680" role="img" aria-label="So sánh phát lệnh trước và sau khi theo dõi trạng thái modal">
+        <text x="170" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#dc2626" font-family="sans-serif">✗ Trước - phát lại mọi lệnh</text>
+        <text x="510" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#16a34a" font-family="sans-serif">✓ Sau - chỉ phát khi thay đổi</text>
+
+        <rect x="20" y="40" width="300" height="280" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+        <rect x="360" y="40" width="300" height="280" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+
+        <g font-family="ui-monospace,monospace" font-size="13">
+          <text x="40" y="75" fill="#d6e2ff">M3 S500</text>
+          <text x="40" y="103" fill="#d6e2ff">G1 X10 Y10 F800</text>
+          <text x="40" y="131" fill="#7d8aa8" text-decoration="line-through">G1 X20 Y15 F800</text>
+          <text x="40" y="159" fill="#7d8aa8" text-decoration="line-through">G1 X30 Y10 F800</text>
+          <text x="40" y="187" fill="#7d8aa8" text-decoration="line-through">M3 S500</text>
+          <text x="40" y="215" fill="#7d8aa8" text-decoration="line-through">G1 X40 Y20 F800</text>
+          <text x="40" y="255" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">Gạch ngang = từ/lệnh dư</text>
+          <text x="40" y="273" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">(F800 và S500 lặp lại</text>
+          <text x="40" y="289" fill="#ff9d6b" font-size="11.5" font-family="sans-serif">khi trạng thái chưa đổi)</text>
+
+          <text x="380" y="75" fill="#9be59b">G1 F800</text>
+          <text x="380" y="103" fill="#9be59b">M3 S500</text>
+          <text x="380" y="131" fill="#d6e2ff">G1 X10 Y10</text>
+          <text x="380" y="159" fill="#d6e2ff">G1 X20 Y15</text>
+          <text x="380" y="187" fill="#d6e2ff">G1 X30 Y10</text>
+          <text x="380" y="215" fill="#d6e2ff">G1 X40 Y20</text>
+          <text x="380" y="255" fill="#9be59b" font-size="11.5" font-family="sans-serif">F và S chỉ phát một lần -</text>
+          <text x="380" y="273" fill="#9be59b" font-size="11.5" font-family="sans-serif">khi giá trị thực sự thay đổi</text>
+        </g>
+      </svg>
+      <figcaption>Cùng một chuyển động, nhưng cột phải ngắn hơn đáng kể nhờ theo dõi <code>engaged</code>, <code>lastPower</code> và <code>feed</code> rồi chỉ phát lệnh trên thay đổi thật sự.</figcaption>
+    </figure>
+
+    <h2>4. Định dạng toạ độ</h2>
+    <ul>
+      <li><b>Độ chính xác:</b> phát tối đa ~3 số lẻ (thang micromet) và <b>bỏ số 0 thừa</b> (<code>12.500 → 12.5</code>, <code>7.000 → 7</code>). Trình phân tích đọc dạng ngắn giống hệt và dòng ngắn stream tốt hơn. Chuẩn hoá <code>-0 → 0</code>.</li>
+      <li><b>Co giãn đơn vị:</b> áp dụng đơn vị của máy. GRBL/Marlin dùng mm trực tiếp; HPGL cơ bản dùng <b>đơn vị plotter</b> = <code>1016/25.4 ≈ 40 units/mm</code> (1 unit = 1/1016 inch) và toạ độ nguyên, nên làm tròn sau khi co giãn.</li>
+      <li><b>Làm việc này một lần, ở cuối cùng.</b> <code>format()</code> áp dụng biến đổi world→machine (§5) và tỉ lệ đơn vị cho từng điểm, ngay tại thời điểm phát mã - không bao giờ làm sớm hơn.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 720 260" width="720" role="img" aria-label="Pipeline định dạng toạ độ: cắt độ chính xác rồi co giãn theo đơn vị máy">
+        <g font-family="sans-serif">
+          <rect x="16" y="30" width="190" height="110" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="111" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#d6e2ff">Toạ độ máy (float)</text>
+          <text x="34" y="78" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">x = 12.500000</text>
+          <text x="34" y="100" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">y = -0.000004</text>
+          <text x="34" y="122" font-family="ui-monospace,monospace" font-size="13" fill="#79c0ff">z = 7.000000</text>
+
+          <path d="M206 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE2)"/>
+
+          <rect x="236" y="30" width="210" height="110" rx="10" fill="#0f1729" stroke="#1c2b4a"/>
+          <text x="341" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#d6e2ff">Cắt ~3 số lẻ · bỏ số 0</text>
+          <text x="254" y="78" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">12.5</text>
+          <text x="254" y="100" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">0  <tspan fill="#8a94a6">(−0 → 0)</tspan></text>
+          <text x="254" y="122" font-family="ui-monospace,monospace" font-size="13" fill="#9be59b">7</text>
+
+          <path d="M446 85 h30" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE2)"/>
+
+          <rect x="476" y="10" width="228" height="60" rx="10" fill="#eaf1ff" stroke="#b9d4ff"/>
+          <text x="590" y="30" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1e49b8">GRBL/Marlin - giữ mm</text>
+          <text x="590" y="52" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" fill="#1e49b8">G1 X12.5 Y0</text>
+
+          <rect x="476" y="100" width="228" height="60" rx="10" fill="#f4f0fb" stroke="#d8c9f0"/>
+          <text x="590" y="120" text-anchor="middle" font-size="11.5" font-weight="700" fill="#6b3fb8">HPGL - ×40 units/mm, làm tròn</text>
+          <text x="590" y="142" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" fill="#6b3fb8">PD 500,0;</text>
+
+          <path d="M446 60 L 476 40" stroke="#94a3b8" stroke-width="1.6"/>
+          <path d="M446 110 L 476 130" stroke="#94a3b8" stroke-width="1.6"/>
+        </g>
+        <text x="360" y="200" text-anchor="middle" font-size="12" fill="#8a94a6" font-family="sans-serif">format(point) làm cả hai việc - cắt độ chính xác và co giãn đơn vị - đúng một lần, ngay khi phát mã</text>
+        <defs>
+          <marker id="arE2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Ví dụ: <code>12.500000</code> → <code>12.5</code>; <code>-0.000004</code> → <code>0</code>; với HPGL, <code>12.5mm</code> nhân <code>40 units/mm</code> rồi làm tròn thành số nguyên <code>500</code>.</figcaption>
+    </figure>
+
+    <h2>5. Biến đổi toạ độ World → Machine</h2>
+    <p>Không gian thiết kế (world) và không gian máy hiếm khi trùng nhau. Kết hợp một phép biến đổi affine nhỏ, áp dụng bên trong <code>format()</code>:</p>
+
+    <ul>
+      <li><b>Góc home / hướng trục.</b> Tịnh tiến + lật để gốc toạ độ là home của máy và các trục hướng theo phần cứng. (Ví dụ: thiết kế +Y hướng xuống, máy +Y hướng lên ⇒ <code>y' = boardH − y</code>.)</li>
+      <li><b>Lật gương (mirror).</b> Một số thiết bị home ở một cạnh với phản chiếu vốn có (ví dụ máy cắt home ở bên phải với +X chạy sang trái). <b>Lật gương trước</b> trong bộ phát mã để triệt tiêu điều đó (<code>x' = boardW − x</code>) sao cho đầu ra không bị đảo ngược. Một nút "lật gương" hướng tới người dùng riêng biệt (cho ép nhiệt/HTV) được áp dụng <em>trước</em> bước này, chỉ ảnh hưởng văn bản phát ra - không ảnh hưởng bản xem trước.</li>
+      <li><b>Xoay.</b> Để đặt vừa tác phẩm chân dung (portrait) lên bàn máy nằm ngang (landscape) hoặc ngược lại, xoay cả công việc (ví dụ xoay 90° theo chiều kim đồng hồ: <code>(x,y) → (y, −x)</code>, rồi tái định vị về góc phần tư dương).</li>
+      <li><b>Rotary wrapping.</b> Nếu một trục là bộ gá xoay (rotary), chuyển đổi độ dài tuyến tính (mm) của trục đó thành <b>độ (degrees)</b>: <code>deg = mm / mmPerRev × 360</code>, và phát nó trên ký tự trục xoay (ví dụ thay <code>Y</code> bằng <code>A</code>), giữ nguyên trục tuyến tính còn lại.</li>
+    </ul>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Giữ nét về home ở toạ độ máy thô</span>
+      <p>Các nét di chuyển về home phải giữ ở <b>toạ độ máy thô</b> (không bị lật gương theo người dùng) để "home" luôn là gốc thật của thiết bị. Xem trước ăn khớp: giữ bộ mô phỏng ở không gian <b>world</b> (dễ đọc với người dùng); chỉ văn bản phát ra mới mang các phép biến đổi này (xem <a href="01-kien-truc.html">Chương 1 §8-9</a>).</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 720 560" width="720" role="img" aria-label="Bốn phép biến đổi world sang machine: lật trục theo home, mirror, xoay 90 độ, rotary wrapping">
+        <g font-family="sans-serif">
+          <!-- a: home/flip -->
+          <text x="180" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">a) Góc home &amp; lật trục</text>
+          <rect x="30" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="90" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">World (Y xuống)</text>
+          <path d="M30 40 v120" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arAy)"/>
+          <path d="M30 160 h120" stroke="#2563eb" stroke-width="1.6" marker-end="url(#arAx)"/>
+          <circle cx="100" cy="80" r="5" fill="#7c3aed"/>
+          <text x="108" y="76" font-size="10" fill="#7c3aed">P(x,y)</text>
+
+          <path d="M170 100 L200 100" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="210" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="270" y="174" text-anchor="middle" font-size="10" fill="#8a94a6">Máy (Y lên, home dưới-trái)</text>
+          <path d="M210 160 v-120" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arAy)"/>
+          <path d="M210 160 h120" stroke="#16a34a" stroke-width="1.6" marker-end="url(#arAx)"/>
+          <circle cx="280" cy="120" r="5" fill="#7c3aed"/>
+          <text x="288" y="130" font-size="10" fill="#7c3aed">P'(x,y')</text>
+          <text x="180" y="205" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">y' = boardH − y</text>
+
+          <!-- b: mirror -->
+          <text x="540" y="26" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">b) Lật gương (mirror)</text>
+          <rect x="410" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <path d="M420 60 L470 60 L470 140" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+          <text x="470" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">World</text>
+          <text x="470" y="30" text-anchor="middle" font-size="0" fill="#8a94a6"></text>
+
+          <path d="M540 100 L570 100" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="590" y="40" width="120" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <path d="M680 60 L630 60 L630 140" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+          <text x="650" y="34" text-anchor="middle" font-size="10" fill="#8a94a6">Máy (home phải)</text>
+          <text x="540" y="205" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">x' = boardW − x</text>
+
+          <!-- c: rotate -->
+          <text x="180" y="316" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">c) Xoay 90° (chân dung → ngang)</text>
+          <rect x="60" y="330" width="70" height="120" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="95" y="324" text-anchor="middle" font-size="10" fill="#8a94a6">World (đứng)</text>
+          <circle cx="95" cy="360" r="4" fill="#7c3aed"/>
+
+          <path d="M140 390 L170 390" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <rect x="185" y="365" width="120" height="70" fill="#fdfbf6" stroke="#dfe5ee"/>
+          <text x="245" y="324" text-anchor="middle" font-size="10" fill="#8a94a6">Máy (ngang)</text>
+          <circle cx="215" cy="400" r="4" fill="#7c3aed"/>
+          <text x="180" y="480" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">(x,y) → (y, −x), tái định vị dương</text>
+
+          <!-- d: rotary -->
+          <text x="540" y="316" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230">d) Rotary wrapping</text>
+          <line x1="420" y1="380" x2="560" y2="380" stroke="#2563eb" stroke-width="2"/>
+          <text x="490" y="370" text-anchor="middle" font-size="10" fill="#8a94a6">trục tuyến tính (mm)</text>
+          <path d="M420 380 L440 375 M420 380 L440 385" stroke="#2563eb" stroke-width="1.4" fill="none"/>
+
+          <path d="M540 390 L570 390" stroke="#94a3b8" stroke-width="2" marker-end="url(#arE3)"/>
+
+          <circle cx="650" cy="400" r="40" fill="none" stroke="#16a34a" stroke-width="2"/>
+          <path d="M650 400 L650 360" stroke="#16a34a" stroke-width="1.6"/>
+          <path d="M650 400 L685 420" stroke="#7c3aed" stroke-width="1.6" marker-end="url(#arE3)"/>
+          <text x="650" y="335" text-anchor="middle" font-size="10" fill="#8a94a6">trục xoay (deg)</text>
+          <text x="540" y="480" text-anchor="middle" font-family="ui-monospace,monospace" font-size="12" fill="#1a2230">deg = mm / mmPerRev × 360</text>
+        </g>
+        <defs>
+          <marker id="arAx" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5568"/></marker>
+          <marker id="arAy" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#4a5568"/></marker>
+          <marker id="arE3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Bốn phép biến đổi thường gặp khi đưa toạ độ world về không gian máy: lật theo home, lật gương để triệt phản chiếu phần cứng, xoay để vừa bàn máy, và bọc trục xoay thành độ.</figcaption>
+    </figure>
+
+    <h2>6. Preamble, postamble &amp; chú thích</h2>
+    <ul>
+      <li><b>Preamble:</b> đặt đơn vị + chế độ định vị tuyệt đối, khởi tạo công cụ (lực/tốc độ/công suất/chọn bút), và di chuyển về home.</li>
+      <li><b>Postamble:</b> nhả công cụ, quay về home, bỏ chọn/kết thúc.</li>
+      <li><b>Chú thích/ghi chú:</b> các dialect có cú pháp chú thích (G-code <code>;</code>) có thể mang ghi chú cho người đọc (tên lớp, thiết lập, cảnh báo làm thô). Dialect <b>không có</b> chú thích (HPGL cơ bản) chỉ được gửi <b>lệnh trần</b> - vì vậy giữ ghi chú như một danh sách tách biệt, đánh dấu rõ, và <b>strip (loại bỏ)</b> chúng trước khi stream tới thiết bị (ví dụ bỏ mọi dòng bắt đầu bằng <code>;</code> hoặc dòng trống). Không bao giờ gửi một chú thích tới máy không phân tích được nó.</li>
+    </ul>
+
+    <h2>7. Lượt chạy (passes) &amp; Nhóm (groups)</h2>
+    <ul>
+      <li><b>Lượt chạy (passes):</b> lặp lại các chuỗi <em>đã sắp thứ tự</em> của một nhóm N lần cho vật liệu dày / cần đánh dấu đậm hơn. Sắp xếp một lần, lặp lại kết quả.</li>
+      <li><b>Nhóm (layer/công cụ):</b> phát thành các khối liên tục, mỗi khối mang công suất/tốc độ/lực/khoảng cách riêng. Sắp xếp trong nội bộ nhóm; giữ vị trí liên tục xuyên qua các nhóm (xem <a href="07-sap-xep.html">Chương 7 §5</a>).</li>
+    </ul>
+
+    <h2>8. Checklist (khi AI sinh một bộ phát mã)</h2>
+    <ul>
+      <li>Triển khai giao diện <code>Emitter</code>; giữ vòng lặp driver trung lập với dialect.</li>
+      <li>Theo dõi trạng thái modal engage/công suất/tốc độ; chỉ phát khi có thay đổi.</li>
+      <li>Định dạng toạ độ: cắt độ chính xác + bỏ số 0 thừa, co giãn theo đơn vị thiết bị.</li>
+      <li>Áp dụng phép affine world→machine (home/mirror/xoay/rotary) chỉ trong <code>format()</code>; giữ nét về home ở toạ độ máy thô.</li>
+      <li>Phát preamble + postamble; strip chú thích cho các dialect không hỗ trợ.</li>
+      <li>Lặp lại chuỗi đã sắp xếp cho các lượt chạy; phát nhóm liên tục cùng thiết lập của chúng.</li>
+      <li>Chạy bộ mô phỏng từ cùng danh sách chuỗi đã sắp xếp, ở không gian world.</li>
+    </ul>
+
+    <div class="pager">
+      <a href="07-sap-xep.html"><div class="dir">← Trước</div><div class="ttl">7 · Sắp xếp đường chạy</div></a>
+      <a class="next" href="09-raster.html"><div class="dir">Chương tiếp →</div><div class="ttl">9 · Khắc Raster (ảnh bitmap)</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

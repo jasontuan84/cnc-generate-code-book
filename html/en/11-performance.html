@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>11 · Performance & Complexity - From Vector to Machine Code</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Contents">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">From Vector to Machine Code
+      <small>Algorithms for generating code for laser, cutting &amp; plotting machines</small>
+    </a>
+    <div class="toc-title">Contents</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Cover &amp; Introduction</span></a>
+      <a href="00-introduction.html"><span class="num">0</span><span>The core idea: the Chain model</span></a>
+      <a href="01-architecture.html"><span class="num">1</span><span>Architecture &amp; Pipeline</span></a>
+      <a href="02-geometry.html"><span class="num">2</span><span>Geometry foundations</span></a>
+      <a href="03-fill-algorithms.html"><span class="num">3</span><span>Fill algorithms &amp; Auto selector</span></a>
+      <a href="04-outline-contour.html"><span class="num">4</span><span>Outline &amp; Contour</span></a>
+      <a href="05-centerline-text.html"><span class="num">5</span><span>Single-stroke (Centerline) text</span></a>
+      <a href="06-pattern-shade.html"><span class="num">6</span><span>Pattern &amp; Shade fill</span></a>
+      <a href="07-toolpath-ordering.html"><span class="num">7</span><span>Toolpath ordering</span></a>
+      <a href="08-machine-code.html"><span class="num">8</span><span>Machine-code emission</span></a>
+      <a href="09-raster-engraving.html"><span class="num">9</span><span>Raster engraving (bitmaps)</span></a>
+      <a href="10-curve-fidelity.html"><span class="num">10</span><span>Curve fidelity &amp; Continuity</span></a>
+      <a href="11-performance.html" class="active"><span class="num">11</span><span>Performance &amp; Complexity</span></a>
+      <a href="12-inputs-edge-cases.html"><span class="num">12</span><span>Inputs, Units &amp; Edge cases</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chapter 11 · Performance</span>
+    <h1>Performance &amp; Complexity</h1>
+    <p class="lead">Good output is not enough - generation must also stay <b>responsive</b>. A user editing artwork expects toolpath regeneration in interactive time, and heavy jobs (fine fills, large images, thousands of glyphs) must never be allowed to hang the app or exhaust memory. This chapter lists the complexity of every stage, the hard caps that keep them bounded, and the techniques that make them fast.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Golden rule</span>
+      <p><b>Every stage must have a known worst-case bound.</b> An unbounded loop that runs on "spacing over area", or an O(n²) pass with no cutoff, will sooner or later meet an input that freezes the app.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 250" width="680" role="img" aria-label="Comparing a loop with no cap against a loop with a hard cap">
+        <text x="180" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626" font-family="sans-serif">NO hard cap</text>
+        <text x="500" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a" font-family="sans-serif">WITH hard cap</text>
+
+        <!-- left axes -->
+        <line x1="60" y1="205" x2="300" y2="205" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="60" y1="205" x2="60" y2="40" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="180" y="228" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">pathological input (spacing→0, area→∞…)</text>
+        <text x="34" y="120" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif" transform="rotate(-90 34 120)">iteration count</text>
+
+        <path d="M65,198 C120,190 160,155 190,110 C212,80 224,58 232,42" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+        <path d="M232,42 L238,26" stroke="#dc2626" stroke-width="3" stroke-dasharray="3 4" stroke-linecap="round"/>
+        <path d="M238,10 l7,14 l-16,0 z" fill="#fff1f0" stroke="#dc2626" stroke-width="2"/>
+        <text x="238" y="16" text-anchor="middle" font-size="9" fill="#dc2626" font-weight="700" font-family="sans-serif">!</text>
+        <text x="180" y="240" text-anchor="middle" font-size="11.5" fill="#dc2626" font-family="sans-serif">⇒ can hang the app</text>
+
+        <!-- right axes -->
+        <line x1="380" y1="205" x2="620" y2="205" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="380" y1="205" x2="380" y2="40" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="500" y="228" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">pathological input (spacing→0, area→∞…)</text>
+
+        <line x1="380" y1="100" x2="620" y2="100" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="614" y="94" text-anchor="end" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">hard cap</text>
+
+        <path d="M385,198 C430,188 465,150 488,118 C502,105 520,101 545,100 C570,100 595,100 615,100" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <path d="M608,92 L618,100 L608,108" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="500" y="240" text-anchor="middle" font-size="11.5" fill="#16a34a" font-family="sans-serif">⇒ always terminates, predictable time</text>
+      </svg>
+      <figcaption>Whatever the stage (flattening, offsetting, clipping, ordering, raster…), a loop with no cap grows without bound when it meets a pathological input. The same loop, given a <b>hard cap</b>, always finishes in predictable time - even if the result is slightly coarsened.</figcaption>
+    </figure>
+
+    <h2>1. Complexity budget per stage</h2>
+    <p>The table below lists the asymptotic cost of every stage in the pipeline, which variable drives that cost, and the corresponding cap or mitigation. This is the central lookup table for the whole chapter.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Stage</th><th>Cost</th><th>Dominant variable</th><th>Bound / mitigation</th></tr></thead>
+      <tbody>
+        <tr><td>Flatten curves</td><td><code>O(points)</code></td><td>tolerance</td><td>adaptive subdivision; don't over-refine</td></tr>
+        <tr><td>Shape metrics</td><td><code>O(v log v)</code></td><td>vertices (hull sort)</td><td>one pass; reuse results</td></tr>
+        <tr><td>Scanline hatch/zigzag</td><td><code>O(scanlines × edges)</code></td><td>area/spacing × complexity</td><td>cheap; spacing floor</td></tr>
+        <tr><td>Contour/spiral offset (boolean, Method A)</td><td><code>O(rings × offset cost)</code></td><td>area/spacing</td><td><b>max-ring cap</b></td></tr>
+        <tr><td>Contour/spiral offset (distance field, Method B)</td><td><code>O(cells) + O(cells + contourLen)</code></td><td>grid cells</td><td><b>max-cell cap + coarsen</b></td></tr>
+        <tr><td>Polyline clip (general)</td><td><code>O(seg × boundaryEdges)</code></td><td>both</td><td>bbox reject; spatial index</td></tr>
+        <tr><td>Space-filling curve</td><td><code>O(cells)</code></td><td>grid order</td><td><b>max-order cap</b></td></tr>
+        <tr><td>Voronoi</td><td><code>O(sites²)</code></td><td>site count</td><td><b>max-site cap</b></td></tr>
+        <tr><td>Skeletonise (text)</td><td><code>O(pixels × iters)</code></td><td>image size</td><td><b>image-size cap</b></td></tr>
+        <tr><td>Ordering (greedy nearest-neighbour)</td><td><code>O(n²)</code></td><td>chain count</td><td><b>cutoff → O(n) fallback</b></td></tr>
+        <tr><td>Raster scan</td><td><code>O(rows × cols)</code></td><td>image × interval</td><td><b>max-cell cap + coarsen</b></td></tr>
+        <tr><td>Emission</td><td><code>O(moves)</code></td><td>move count</td><td>trim precision; stream in chunks</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2>2. Flattening: fidelity vs. point count</h2>
+    <p>Point count is set by tolerance (see <a href="10-curve-fidelity.html">Chapter 10 §2</a>). More points ripple downstream through <em>every</em> later stage (clipping, ordering, emission, streaming). Therefore:</p>
+    <ul>
+      <li>Use <b>adaptive</b> subdivision so straight spans cost almost no points, and only tight curves receive extra ones.</li>
+      <li>Never set tolerance below the tool's own resolution - extra points buy no quality but cost throughout the whole pipeline.</li>
+      <li>Flatten <b>once</b> per shape and cache the result if the shape is unchanged.</li>
+    </ul>
+
+    <h2>3. Fills</h2>
+
+    <h3>Scanline (hatch / zigzag)</h3>
+    <p>For every scanline we test crossings against every boundary edge → <code>O(scanlines × edges)</code>. Scanline count equals <code>height / spacing</code>, so a very small spacing on a tall shape explodes. Guards:</p>
+    <ul>
+      <li>A <b>spacing floor</b> (never below a sane minimum) caps the scanline count.</li>
+      <li>The crossing test is trivial arithmetic; this is the <em>cheapest</em> fill.</li>
+      <li>Optional: bucket edges by y-range so each scanline only tests edges that can cross it (turns the edge factor into a near-constant).</li>
+    </ul>
+
+    <h3>Offset (contour / spiral)</h3>
+    <p>There are two different cost profiles, one per offset method (see <a href="02-geometry.html">Chapter 2 §7</a>):</p>
+
+    <div class="cards">
+      <div class="card"><h4>Method A - boolean erosion</h4><p>Each inward offset pass costs one outline stroke plus one boolean subtract - the most expensive fill. Ring count = <code>meanWidth / spacing</code>.</p></div>
+      <div class="card"><h4>Method B - distance field + iso-contours</h4><p>One rasterise pass plus one distance transform (<code>O(cells)</code>), then a single marching-squares pass (<code>O(cells + total contour length)</code>) yields <b>all</b> rings at once.</p></div>
+    </div>
+
+    <p><b>Method A</b> needs a <b>max-ring cap</b> (e.g. a few thousand) so that a tiny spacing on a huge area still terminates; and it stops as soon as an inset pass returns empty.</p>
+    <p><b>Method B</b>'s cost is set by the <b>grid</b>, not by the ring count - so it does <em>not</em> blow up as spacing shrinks (a smaller spacing just reads more iso-levels off the same field). It needs a <b>max-cell cap</b> (e.g. ~500k for a pure-language pass): if <code>(w+pad)(h+pad)/h² > cap</code>, enlarge the grid step <code>h</code> by <code>√(area/cap)</code> and record it; the default grid step is <code>h ≈ spacing/3</code>. A chamfer transform is two linear scan passes; marching squares emits crossings in a single pass over cells (only boundary cells produce segments) - both run comfortably under a second within the cell cap.</p>
+
+    <figure>
+      <svg viewBox="0 0 680 320" width="680" role="img" aria-label="Comparing the cost of Method A and Method B as offset spacing shrinks">
+        <!-- top mini diagrams -->
+        <text x="165" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Method A - concentric rings (boolean)</text>
+        <g stroke="#2563eb" fill="none" stroke-width="2">
+          <path d="M165 45 C110 45 75 80 75 110 C75 140 110 165 165 165 C220 165 255 140 255 110 C255 80 220 45 165 45 Z"/>
+          <path d="M165 58 C120 58 92 84 92 110 C92 136 120 152 165 152 C210 152 238 136 238 110 C238 84 210 58 165 58 Z"/>
+          <path d="M165 71 C130 71 109 88 109 110 C109 132 130 139 165 139 C200 139 225 132 225 110 C225 88 200 71 165 71 Z"/>
+          <path d="M165 84 C140 84 126 92 126 110 C126 128 140 126 165 126 C190 126 212 128 212 110 C212 92 190 84 165 84 Z"/>
+        </g>
+        <path d="M165 92 C150 92 143 100 143 110 C143 118 150 113 165 113" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3" fill="none"/>
+        <text x="165" y="188" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">spacing↓ ⇒ rings↑↑ (needs max-ring cap)</text>
+
+        <text x="515" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Method B - grid + iso-contours</text>
+        <g stroke="#dfe5ee" stroke-width="1">
+          <path d="M405 45 h220 M405 65 h220 M405 85 h220 M405 105 h220 M405 125 h220 M405 145 h220 M405 165 h220"/>
+          <path d="M405 45 v120 M430 45 v120 M455 45 v120 M480 45 v120 M505 45 v120 M530 45 v120 M555 45 v120 M580 45 v120 M605 45 v120 M625 45 v120"/>
+        </g>
+        <path d="M415 150 C440 120 450 90 480 70 C505 55 540 55 560 65" stroke="#16a34a" stroke-width="2.4" fill="none"/>
+        <path d="M425 160 C450 132 465 105 495 84 C520 68 555 68 575 78" stroke="#16a34a" stroke-width="2.4" fill="none" stroke-dasharray="1 0"/>
+        <path d="M435 168 C460 145 480 118 508 98 C532 82 568 82 590 92" stroke="#16a34a" stroke-width="2.4" fill="none"/>
+        <text x="515" y="188" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">every ring is read off one fixed grid at once</text>
+
+        <!-- cost chart -->
+        <line x1="70" y1="290" x2="620" y2="290" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="70" y1="290" x2="70" y2="215" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="345" y="310" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">offset spacing shrinking →</text>
+        <text x="45" y="252" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif" transform="rotate(-90 45 252)">cost</text>
+
+        <path d="M75,285 C160,278 230,255 290,225 L320,222" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+        <line x1="320" y1="222" x2="615" y2="222" stroke="#dc2626" stroke-width="3" stroke-dasharray="6 4"/>
+        <text x="470" y="215" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">Method A - clamped by max-ring cap (inner rings dropped)</text>
+
+        <path d="M75,283 C200,280 400,278 615,277" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <text x="470" y="270" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">Method B - flat, grid-bound, no blow-up</text>
+      </svg>
+      <figcaption>Method A pays per <b>ring</b>, so shrinking spacing drives cost up steeply, requiring a max-ring cap (trade-off: the innermost rings are lost). Method B pays per <b>fixed grid size</b> - a smaller spacing just reads more iso-levels, without inflating the cost.</figcaption>
+    </figure>
+
+    <p>For both methods: prefer scanline fills for large plain areas; reserve contour/spiral for shapes whose <em>own shape</em> calls for them (the auto selector already handles this, see <a href="03-fill-algorithms.html">Chapter 3 §4</a>).</p>
+
+    <h3>Decorative (space-filling curves, Voronoi)</h3>
+    <ul>
+      <li>Hilbert/Peano: cap the curve's <b>order</b> (e.g. 2⁷ or 3⁴ cells/side) so the point count cannot blow up.</li>
+      <li>Voronoi: naive cell clipping is <b>O(sites²)</b>; cap the site count (e.g. ≤ 240). Use a spatial structure (or a real Fortune's algorithm Voronoi) if more cells are needed.</li>
+    </ul>
+
+    <h2>4. Clipping: the hidden quadratic</h2>
+    <p>Clipping a polyline against a general region tests every segment against every boundary edge → <b><code>O(seg × boundaryEdges)</code></b>. Pattern tiling multiplies this by the tile count. This is the most common accidental hotspot. Mitigations:</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">A commonly missed hotspot</span>
+      <p>A pattern-tiling loop (see <a href="06-pattern-shade.html">Chapter 6</a>) looks harmless but multiplies segment count by tile count <em>and</em> by boundary edge count - easily turning a seemingly cheap operation into a quadratic pass that runs for seconds.</p>
+    </div>
+
+    <ul>
+      <li><b>Bounding-box reject:</b> skip any (segment, edge) pair whose bounding boxes don't overlap - turns most comparisons into a cheap, early-out test.</li>
+      <li><b>Spatial index</b> on boundary edges (uniform grid, quadtree, or an interval tree on y). Query only edges near the segment being tested. Brings cost down to near <code>O(seg · log)</code>.</li>
+      <li><b>Tile-count guard:</b> if the estimated tile count is implausibly large, fall back to a plain fill rather than tiling millions of cells.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 300" width="680" role="img" aria-label="Bounding-box reject and spatial index when clipping">
+        <!-- spatial grid -->
+        <g stroke="#e6ecf5" stroke-width="1">
+          <path d="M40 40 h600 M40 100 h600 M40 160 h600 M40 220 h600 M40 260 h600"/>
+          <path d="M40 40 v220 M160 40 v220 M280 40 v220 M400 40 v220 M520 40 v220 M640 40 v220"/>
+        </g>
+        <rect x="280" y="100" width="120" height="60" fill="#eaf1ff" opacity=".7"/>
+        <text x="340" y="94" text-anchor="middle" font-size="10" fill="#2563eb" font-family="sans-serif">spatial-index cell containing the segment</text>
+
+        <!-- boundary polygon edges -->
+        <g stroke="#1a2230" stroke-width="2.4" fill="none">
+          <path d="M90 220 L150 130"/>
+          <path d="M150 130 L260 115"/>
+          <path d="M330 108 L400 140"/>
+          <path d="M470 60 L560 90"/>
+          <path d="M560 90 L600 200"/>
+        </g>
+        <!-- bboxes for edges: near ones highlighted, far ones greyed -->
+        <rect x="150" y="130" width="110" height="15" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 3"/>
+        <rect x="330" y="108" width="70" height="32" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 3"/>
+        <rect x="88" y="130" width="62" height="90" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <rect x="470" y="60" width="90" height="30" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <rect x="560" y="90" width="40" height="110" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <text x="115" y="255" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+        <text x="500" y="45" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+        <text x="612" y="205" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+
+        <!-- target segment -->
+        <line x1="295" y1="150" x2="385" y2="118" stroke="#2563eb" stroke-width="3.6" stroke-linecap="round"/>
+        <rect x="293" y="116" width="94" height="36" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="4 3"/>
+
+        <g font-family="sans-serif" font-size="11.5">
+          <rect x="40" y="272" width="14" height="4" fill="#2563eb"/><text x="60" y="278" fill="#4a5568">segment to clip (and its bbox)</text>
+          <rect x="260" y="272" width="14" height="4" fill="#d97706"/><text x="280" y="278" fill="#4a5568">edge with overlapping bbox → real test</text>
+          <rect x="500" y="272" width="14" height="4" fill="#c9d2e0"/><text x="520" y="278" fill="#4a5568">edge with non-overlapping bbox → early reject (✕)</text>
+        </g>
+      </svg>
+      <figcaption>Bounding-box reject turns most (segment, edge) pairs into an instant cheap rejection; a spatial index (a grid here) narrows the candidate list to only edges near the segment being tested, bringing cost from <code>O(seg × edges)</code> down to near <code>O(seg · log)</code>.</figcaption>
+    </figure>
+
+    <h2>5. Ordering: O(n²) with a cutoff</h2>
+    <p>Greedy nearest-neighbour (see <a href="07-toolpath-ordering.html">Chapter 7</a>) is <code>O(n²)</code>. Dense fills produce tens of thousands of chains, so:</p>
+    <ul>
+      <li>A <b>cutoff</b> (e.g. 4000 chains): above it, skip the <code>O(n²)</code> pass and use the orientation-only <b>O(n)</b> fallback, which trusts the fill's inherent locality (scanline/ring order).</li>
+      <li>For large-but-important sets, use a <b>spatial sort</b> (grid order or a Hilbert order on chain midpoints) → <code>O(n log n)</code>, giving a much better tour than raw source order.</li>
+      <li>Use <b>squared</b> distances (no <code>sqrt</code>) in the inner loop.</li>
+    </ul>
+
+    <h2>6. Raster: cap and coarsen</h2>
+    <p>Raster is <code>O(rows × cols)</code> and can reach millions of cells (see <a href="09-raster-engraving.html">Chapter 9 §2</a>):</p>
+    <ul>
+      <li>Step ≥ one source pixel (never oversample) <b>and</b> ≥ the interval.</li>
+      <li><b>Max-cell cap:</b> if <code>rows × cols > kMaxCells</code>, coarsen both steps by <code>√(cells/cap)</code> and record a note.</li>
+      <li><b>Run-length merging</b> plus modal power collapsing compress a gradient into far fewer moves.</li>
+      <li>Don't feed raster moves into the animated simulator (preview as a static image instead) - animating millions of moves would kill UI responsiveness.</li>
+    </ul>
+
+    <h2>7. Skeletonisation: bound the bitmap</h2>
+    <p>Single-stroke text centerlines (see <a href="05-centerline-text.html">Chapter 5</a>) rasterise then thin iteratively:</p>
+    <ul>
+      <li><b>Cap resolution and total pixel count</b> (e.g. max dimension ~2600 px, ≤ ~9M px total).</li>
+      <li>Thinning is <code>O(pixels)</code> per iteration, with a bounded (guarded) iteration count.</li>
+      <li>Skeletonise per glyph, not per whole text block, so every bitmap stays small.</li>
+    </ul>
+
+    <h2>8. Emission &amp; streaming</h2>
+    <ul>
+      <li><b>Trim coordinate precision</b> and strip trailing zeros (see <a href="08-machine-code.html">Chapter 8 §4</a>): fewer bytes ⇒ deeper controller look-ahead ⇒ smoother dense motion, and less string-building work.</li>
+      <li><b>Modal-state suppression</b> (see <a href="08-machine-code.html">Chapter 8 §3</a>) removes redundant lines - smaller output, faster to build and send.</li>
+      <li>Build output with a pre-sized buffer / streaming writer, not repeated string concatenation (avoid <code>O(n²)</code> string growth).</li>
+      <li>For very large jobs, <b>stream</b> to the device/file incrementally rather than materialising the whole program in memory.</li>
+    </ul>
+
+    <h2>9. Keeping the UI responsive</h2>
+    <ul>
+      <li><b>Report progress</b> at a coarse cadence (e.g. once per shape, or every N raster rows) so a long job shows a moving progress bar, not a frozen window.</li>
+      <li><b>Generate off the UI thread</b> (worker/background) for heavy jobs; post results back afterwards. Keep the geometry pure/thread-safe so this stays simple.</li>
+      <li><b>Cancellation:</b> allow a long generation job to be cancelled; check a flag at the same cadence as progress.</li>
+      <li><b>Incremental regeneration:</b> only regenerate shapes/layers that changed; cache the rest. Flattening and filling an untouched shape should never be repeated.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 260" width="680" role="img" aria-label="Ordering with a cutoff and off-thread generation keeping the UI responsive">
+        <text x="165" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Ordering: cutoff</text>
+        <rect x="90" y="40" width="150" height="42" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+        <text x="165" y="65" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">n chains to order</text>
+        <path d="M165 82 v20" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arh)"/>
+        <polygon points="165,102 220,132 165,162 110,132" fill="#fff8e6" stroke="#f2d88a"/>
+        <text x="165" y="128" text-anchor="middle" font-size="10.5" fill="#4a5568" font-family="sans-serif">n ≤</text>
+        <text x="165" y="141" text-anchor="middle" font-size="10.5" fill="#4a5568" font-family="sans-serif">4000?</text>
+
+        <path d="M110 132 h-40" stroke="#16a34a" stroke-width="1.8" marker-end="url(#arh)"/>
+        <text x="55" y="122" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">yes</text>
+        <rect x="4" y="140" width="118" height="46" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="63" y="160" text-anchor="middle" font-size="10.5" fill="#166534" font-family="sans-serif">Greedy nearest</text>
+        <text x="63" y="174" text-anchor="middle" font-size="10.5" fill="#166534" font-family="sans-serif">neighbour · O(n²)</text>
+
+        <path d="M220 132 h40" stroke="#dc2626" stroke-width="1.8" marker-end="url(#arh)"/>
+        <text x="280" y="122" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">no</text>
+        <rect x="228" y="140" width="118" height="46" rx="8" fill="#fff1f0" stroke="#f4b7b0"/>
+        <text x="287" y="160" text-anchor="middle" font-size="10.5" fill="#8a2323" font-family="sans-serif">Spatial/Hilbert sort</text>
+        <text x="287" y="174" text-anchor="middle" font-size="10.5" fill="#8a2323" font-family="sans-serif">fallback · O(n log n)</text>
+
+        <line x1="380" y1="10" x2="380" y2="250" stroke="#e6ecf5" stroke-width="1.5"/>
+
+        <text x="530" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Off-thread generation</text>
+        <rect x="420" y="45" width="220" height="46" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+        <text x="530" y="63" text-anchor="middle" font-size="11" fill="#1e49b8" font-family="sans-serif" font-weight="700">UI thread</text>
+        <rect x="432" y="70" width="150" height="10" rx="5" fill="#dfe5ee"/>
+        <rect x="432" y="70" width="96" height="10" rx="5" fill="#2563eb"/>
+        <circle cx="612" cy="75" r="9" fill="#fff" stroke="#dc2626" stroke-width="1.6"/>
+        <text x="612" y="79" text-anchor="middle" font-size="9" fill="#dc2626" font-family="sans-serif">✕</text>
+
+        <path d="M500 91 v18" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arh)"/>
+        <text x="470" y="104" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">cancel</text>
+        <path d="M560 127 v-18" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arh2)"/>
+        <text x="590" y="104" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">progress %</text>
+
+        <rect x="420" y="127" width="220" height="46" rx="8" fill="#0f1729" stroke="#1c2b4a"/>
+        <text x="530" y="145" text-anchor="middle" font-size="11" fill="#9be59b" font-family="sans-serif" font-weight="700">Background worker</text>
+        <text x="530" y="161" text-anchor="middle" font-size="10" fill="#d6e2ff" font-family="sans-serif">generates geometry (pure/thread-safe)</text>
+
+        <path d="M530 173 v18" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arh)"/>
+        <text x="530" y="207" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">only regenerate changed shapes</text>
+        <rect x="420" y="212" width="68" height="30" rx="6" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="454" y="231" text-anchor="middle" font-size="9.5" fill="#166534" font-family="sans-serif">cache</text>
+        <rect x="500" y="212" width="68" height="30" rx="6" fill="#fff8e6" stroke="#f2d88a"/>
+        <text x="534" y="231" text-anchor="middle" font-size="9.5" fill="#7a5b12" font-family="sans-serif">changed</text>
+        <rect x="580" y="212" width="60" height="30" rx="6" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="610" y="231" text-anchor="middle" font-size="9.5" fill="#166534" font-family="sans-serif">cache</text>
+
+        <defs>
+          <marker id="arh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+          <marker id="arh2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#8a94a6"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Left: above the cutoff, ordering steps down from <code>O(n²)</code> greedy to <code>O(n log n)</code> spatial/Hilbert sort. Right: heavy jobs run on a background worker, report progress, and accept cancellation; only shapes that changed get regenerated, the rest is served from cache.</figcaption>
+    </figure>
+
+    <h2>10. Determinism - a rule tied to performance</h2>
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Controlled randomness</span>
+      <p>Avoid RNG in geometry (e.g. Voronoi jitter): derive randomness from an index-based <b>hash</b> so output is reproducible across runs. Deterministic output makes caching valid and debugging tractable; a nondeterministic generator cannot safely skip "unchanged" work.</p>
+    </div>
+
+    <h2>11. Checklist (AI keeping generation fast)</h2>
+    <ul>
+      <li>Every iterative construction has a hard cap (rings, order, sites, cells, iterations).</li>
+      <li>Adaptive flattening; never refine below tool resolution; cache per shape.</li>
+      <li>Clipping uses bbox reject plus a spatial index; guard tile counts.</li>
+      <li>Ordering switches to O(n) / spatial sort above a chain-count cutoff; squared distances only.</li>
+      <li>Raster caps and coarsens; run-length merges; never fed to the animated simulator.</li>
+      <li>Emission trims precision, suppresses modal repeats, streams large jobs.</li>
+      <li>Heavy jobs run off the UI thread with progress and cancellation; regenerate incrementally.</li>
+      <li>Geometry is deterministic (hash-based, not RNG).</li>
+    </ul>
+
+    <div class="pager">
+      <a href="10-curve-fidelity.html"><div class="dir">← Previous</div><div class="ttl">10 · Curve Fidelity &amp; Continuity</div></a>
+      <a class="next" href="12-inputs-edge-cases.html"><div class="dir">Next chapter →</div><div class="ttl">12 · Inputs, Units &amp; Edge Cases</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>

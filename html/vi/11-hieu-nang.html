@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>11 · Hiệu năng &amp; Độ phức tạp - Từ Vector đến Mã Máy</title>
+<link rel="stylesheet" href="assets/book.css">
+</head>
+<body>
+<button class="menu-btn" aria-label="Mục lục">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#1a2230" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+</button>
+<div class="backdrop"></div>
+<div class="layout">
+
+  <aside class="sidebar">
+    <a class="brand" href="index.html">Từ Vector đến Mã Máy
+      <small>Thuật toán sinh mã cho máy laser, máy cắt &amp; máy vẽ</small>
+    </a>
+    <div class="toc-title">Mục lục</div>
+    <nav>
+      <a href="index.html"><span class="num">•</span><span>Trang bìa &amp; Giới thiệu chung</span></a>
+      <a href="00-gioi-thieu.html"><span class="num">0</span><span>Ý tưởng cốt lõi: mô hình Chuỗi</span></a>
+      <a href="01-kien-truc.html"><span class="num">1</span><span>Kiến trúc &amp; Pipeline</span></a>
+      <a href="02-hinh-hoc.html"><span class="num">2</span><span>Nền tảng hình học</span></a>
+      <a href="03-thuat-toan-to.html"><span class="num">3</span><span>Thuật toán tô &amp; Bộ chọn tự động</span></a>
+      <a href="04-duong-vien.html"><span class="num">4</span><span>Đường viền &amp; Contour</span></a>
+      <a href="05-chu-net-don.html"><span class="num">5</span><span>Chữ nét đơn (Centerline)</span></a>
+      <a href="06-hoa-van.html"><span class="num">6</span><span>Hoa văn &amp; Tô bóng</span></a>
+      <a href="07-sap-xep.html"><span class="num">7</span><span>Sắp xếp đường chạy</span></a>
+      <a href="08-sinh-ma.html"><span class="num">8</span><span>Sinh mã máy</span></a>
+      <a href="09-raster.html"><span class="num">9</span><span>Khắc Raster (ảnh bitmap)</span></a>
+      <a href="10-do-muot.html"><span class="num">10</span><span>Độ mượt &amp; Liên tục đường cong</span></a>
+      <a href="11-hieu-nang.html" class="active"><span class="num">11</span><span>Hiệu năng &amp; Độ phức tạp</span></a>
+      <a href="12-truong-hop-bien.html"><span class="num">12</span><span>Đầu vào, Đơn vị &amp; Trường hợp biên</span></a>
+    </nav>
+  </aside>
+
+  <main class="content">
+  <article class="page">
+
+    <span class="kicker">Chương 11 · Hiệu năng</span>
+    <h1>Hiệu năng &amp; Độ phức tạp</h1>
+    <p class="lead">Đầu ra đẹp là chưa đủ - quá trình sinh mã còn phải luôn <b>chạy mượt mà</b>. Người dùng chỉnh sửa hình vẽ mong đường chạy được tính lại trong thời gian tương tác, và các tác vụ nặng (tô mịn, ảnh lớn, hàng nghìn ký tự) không bao giờ được phép treo máy hay ngốn hết bộ nhớ. Chương này liệt kê độ phức tạp của từng giai đoạn, các trần cứng giữ chúng trong tầm kiểm soát, và các kỹ thuật giúp chúng chạy nhanh.</p>
+
+    <div class="box key">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#b7791f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.5 6.5H21l-5.3 4 2 6.5L12 15l-5.7 4 2-6.5L3 8.5h6.5z"/></svg>
+      <span class="box-t">Nguyên tắc vàng (golden rule)</span>
+      <p><b>Mọi giai đoạn đều phải có một trần trong trường hợp xấu nhất đã biết trước.</b> Một vòng lặp không giới hạn chạy theo "khoảng cách trên diện tích", hay một lượt duyệt O(n²) không có ngưỡng cắt, sớm muộn cũng sẽ gặp một đầu vào khiến ứng dụng đơ cứng.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 680 250" width="680" role="img" aria-label="So sánh vòng lặp không có trần và vòng lặp có trần cứng">
+        <text x="180" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#dc2626" font-family="sans-serif">KHÔNG có trần cứng</text>
+        <text x="500" y="24" text-anchor="middle" font-size="14" font-weight="700" fill="#16a34a" font-family="sans-serif">CÓ trần cứng</text>
+
+        <!-- left axes -->
+        <line x1="60" y1="205" x2="300" y2="205" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="60" y1="205" x2="60" y2="40" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="180" y="228" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">đầu vào bệnh lý (spacing→0, area→∞…)</text>
+        <text x="34" y="120" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif" transform="rotate(-90 34 120)">số vòng lặp</text>
+
+        <path d="M65,198 C120,190 160,155 190,110 C212,80 224,58 232,42" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+        <path d="M232,42 L238,26" stroke="#dc2626" stroke-width="3" stroke-dasharray="3 4" stroke-linecap="round"/>
+        <path d="M238,10 l7,14 l-16,0 z" fill="#fff1f0" stroke="#dc2626" stroke-width="2"/>
+        <text x="238" y="16" text-anchor="middle" font-size="9" fill="#dc2626" font-weight="700" font-family="sans-serif">!</text>
+        <text x="180" y="240" text-anchor="middle" font-size="11.5" fill="#dc2626" font-family="sans-serif">⇒ có thể treo ứng dụng</text>
+
+        <!-- right axes -->
+        <line x1="380" y1="205" x2="620" y2="205" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="380" y1="205" x2="380" y2="40" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="500" y="228" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">đầu vào bệnh lý (spacing→0, area→∞…)</text>
+
+        <line x1="380" y1="100" x2="620" y2="100" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="614" y="94" text-anchor="end" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">trần cứng (cap)</text>
+
+        <path d="M385,198 C430,188 465,150 488,118 C502,105 520,101 545,100 C570,100 595,100 615,100" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <path d="M608,92 L618,100 L608,108" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="500" y="240" text-anchor="middle" font-size="11.5" fill="#16a34a" font-family="sans-serif">⇒ luôn kết thúc, thời gian dự đoán được</text>
+      </svg>
+      <figcaption>Bất kể ở giai đoạn nào (làm phẳng, offset, xén, sắp xếp, raster…), một vòng lặp không trần sẽ tăng vô hạn khi gặp đầu vào bệnh lý. Cùng một vòng lặp, khi có <b>trần cứng</b>, luôn dừng trong thời gian có thể dự đoán - dù kết quả có thể bị làm thô đi một chút.</figcaption>
+    </figure>
+
+    <h2>1. Ngân sách độ phức tạp theo từng giai đoạn</h2>
+    <p>Bảng dưới đây liệt kê chi phí tiệm cận của mọi giai đoạn trong pipeline, biến số nào chi phối chi phí đó, và trần/biện pháp khắc phục tương ứng. Đây là bảng tra cứu trung tâm của cả chương.</p>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Giai đoạn</th><th>Chi phí</th><th>Biến chi phối</th><th>Trần / khắc phục</th></tr></thead>
+      <tbody>
+        <tr><td>Làm phẳng đường cong</td><td><code>O(điểm)</code></td><td>dung sai</td><td>chia nhỏ thích ứng; không tinh chỉnh quá mức</td></tr>
+        <tr><td>Đo lường hình dạng</td><td><code>O(v log v)</code></td><td>số đỉnh (sắp xếp hull)</td><td>một lượt duy nhất; tái dùng kết quả</td></tr>
+        <tr><td>Tô scanline (hatch/zigzag)</td><td><code>O(dòng quét × cạnh)</code></td><td>diện tích/khoảng cách × độ phức tạp</td><td>rẻ; sàn khoảng cách</td></tr>
+        <tr><td>Offset contour/spiral (boolean, Method A)</td><td><code>O(vòng × chi phí offset)</code></td><td>diện tích/khoảng cách</td><td><b>trần max-ring</b></td></tr>
+        <tr><td>Offset contour/spiral (trường khoảng cách, Method B)</td><td><code>O(ô) + O(ô + chiều dài contour)</code></td><td>số ô lưới</td><td><b>trần max-cell + làm thô</b></td></tr>
+        <tr><td>Xén polyline (tổng quát)</td><td><code>O(đoạn × cạnh biên)</code></td><td>cả hai</td><td>bbox reject; spatial index</td></tr>
+        <tr><td>Đường lấp đầy không gian</td><td><code>O(ô)</code></td><td>bậc lưới</td><td><b>trần max-order</b></td></tr>
+        <tr><td>Voronoi</td><td><code>O(site²)</code></td><td>số site</td><td><b>trần max-site</b></td></tr>
+        <tr><td>Vector hoá khung xương (chữ)</td><td><code>O(pixel × vòng lặp)</code></td><td>kích thước ảnh</td><td><b>trần kích thước ảnh</b></td></tr>
+        <tr><td>Sắp xếp (láng giềng gần nhất tham lam)</td><td><code>O(n²)</code></td><td>số chuỗi</td><td><b>ngưỡng cắt → fallback O(n)</b></td></tr>
+        <tr><td>Quét raster</td><td><code>O(hàng × cột)</code></td><td>ảnh × khoảng cách</td><td><b>trần max-cell + làm thô</b></td></tr>
+        <tr><td>Phát mã</td><td><code>O(số nét)</code></td><td>số nét di chuyển</td><td>cắt bớt độ chính xác; stream theo khối</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h2>2. Làm phẳng: độ trung thực đấu với số điểm</h2>
+    <p>Số điểm được quyết định bởi dung sai (xem <a href="10-do-muot.html">Chương 10 §2</a>). Càng nhiều điểm thì chi phí càng lan toả xuống <em>mọi</em> giai đoạn phía sau (xén, sắp xếp, phát mã, streaming). Vì vậy:</p>
+    <ul>
+      <li>Dùng chia nhỏ <b>thích ứng</b> (adaptive subdivision) để đoạn thẳng gần như không tốn điểm nào, chỉ những khúc cong gắt mới nhận thêm điểm.</li>
+      <li>Không bao giờ đặt dung sai thấp hơn độ phân giải của công cụ - điểm thừa không mua thêm chất lượng nào mà lại tốn chi phí xuyên suốt.</li>
+      <li>Làm phẳng <b>một lần</b> cho mỗi hình và lưu cache (cache) kết quả nếu hình không đổi.</li>
+    </ul>
+
+    <h2>3. Vùng tô</h2>
+
+    <h3>Scanline (hatch / zigzag)</h3>
+    <p>Với mỗi dòng quét, ta kiểm tra giao cắt với từng cạnh biên → <code>O(dòng quét × cạnh)</code>. Số dòng quét = <code>chiều cao / khoảng cách</code>, nên khoảng cách rất nhỏ trên một hình cao sẽ bùng nổ. Các biện pháp bảo vệ:</p>
+    <ul>
+      <li><b>Sàn khoảng cách</b> (không bao giờ thấp hơn một mức tối thiểu hợp lý) chặn trần số dòng quét.</li>
+      <li>Phép kiểm tra giao cắt chỉ là số học tầm thường; đây là bộ tô <em>rẻ nhất</em>.</li>
+      <li>Tuỳ chọn: gom cạnh theo khoảng y (bucket) để mỗi dòng quét chỉ kiểm tra những cạnh có thể cắt nó (biến số cạnh thành gần như hằng số).</li>
+    </ul>
+
+    <h3>Offset (contour / spiral)</h3>
+    <p>Có hai hồ sơ chi phí khác nhau, ứng với hai phương pháp offset (xem <a href="02-hinh-hoc.html">Chương 2 §7</a>):</p>
+
+    <div class="cards">
+      <div class="card"><h4>Method A - bào mòn boolean</h4><p>Mỗi lượt offset vào trong tốn một phép tạo nét viền + một phép trừ boolean - bộ tô đắt nhất. Số vòng = <code>bề rộng trung bình / khoảng cách</code>.</p></div>
+      <div class="card"><h4>Method B - trường khoảng cách + đường đẳng trị</h4><p>Một lượt raster hoá + một biến đổi khoảng cách (<code>O(ô)</code>) rồi một lượt marching-squares duy nhất (<code>O(ô + tổng chiều dài contour)</code>) cho ra <b>tất cả</b> các vòng cùng lúc.</p></div>
+    </div>
+
+    <p><b>Method A</b> cần: <b>trần max-ring</b> (ví dụ vài nghìn) để khoảng cách rất nhỏ trên một diện tích lớn vẫn kết thúc được; và dừng ngay khi một lượt thu nhỏ trả về rỗng.</p>
+    <p><b>Method B</b> có chi phí do <b>lưới</b> quyết định, không phải do số vòng - nên nó <em>không</em> bùng nổ khi khoảng cách co lại (khoảng cách nhỏ hơn chỉ đơn giản là đọc thêm mức đẳng trị từ cùng một trường). Cần: <b>trần max-cell</b> (ví dụ ~500k cho một lượt xử lý thuần bằng ngôn ngữ): nếu <code>(w+pad)(h+pad)/h² > cap</code>, phóng to bước lưới <code>h</code> theo <code>√(area/cap)</code> và ghi chú lại; bước lưới mặc định <code>h ≈ spacing/3</code>. Một phép biến đổi chamfer là hai lượt quét tuyến tính; marching squares phát sinh giao cắt trong một lượt duy nhất qua các ô (chỉ ô biên mới sinh đoạn) - cả hai đều chạy dưới một giây thoải mái trong trần ô đã đặt.</p>
+
+    <figure>
+      <svg viewBox="0 0 680 320" width="680" role="img" aria-label="So sánh chi phí Method A và Method B khi khoảng cách offset giảm dần">
+        <!-- top mini diagrams -->
+        <text x="165" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Method A - vòng đồng tâm (boolean)</text>
+        <g stroke="#2563eb" fill="none" stroke-width="2">
+          <path d="M165 45 C110 45 75 80 75 110 C75 140 110 165 165 165 C220 165 255 140 255 110 C255 80 220 45 165 45 Z"/>
+          <path d="M165 58 C120 58 92 84 92 110 C92 136 120 152 165 152 C210 152 238 136 238 110 C238 84 210 58 165 58 Z"/>
+          <path d="M165 71 C130 71 109 88 109 110 C109 132 130 139 165 139 C200 139 225 132 225 110 C225 88 200 71 165 71 Z"/>
+          <path d="M165 84 C140 84 126 92 126 110 C126 128 140 126 165 126 C190 126 212 128 212 110 C212 92 190 84 165 84 Z"/>
+        </g>
+        <path d="M165 92 C150 92 143 100 143 110 C143 118 150 113 165 113" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 3" fill="none"/>
+        <text x="165" y="188" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">khoảng cách↓ ⇒ vòng↑↑ (cần trần max-ring)</text>
+
+        <text x="515" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Method B - lưới + đẳng trị</text>
+        <g stroke="#dfe5ee" stroke-width="1">
+          <path d="M405 45 h220 M405 65 h220 M405 85 h220 M405 105 h220 M405 125 h220 M405 145 h220 M405 165 h220"/>
+          <path d="M405 45 v120 M430 45 v120 M455 45 v120 M480 45 v120 M505 45 v120 M530 45 v120 M555 45 v120 M580 45 v120 M605 45 v120 M625 45 v120"/>
+        </g>
+        <path d="M415 150 C440 120 450 90 480 70 C505 55 540 55 560 65" stroke="#16a34a" stroke-width="2.4" fill="none"/>
+        <path d="M425 160 C450 132 465 105 495 84 C520 68 555 68 575 78" stroke="#16a34a" stroke-width="2.4" fill="none" stroke-dasharray="1 0"/>
+        <path d="M435 168 C460 145 480 118 508 98 C532 82 568 82 590 92" stroke="#16a34a" stroke-width="2.4" fill="none"/>
+        <text x="515" y="188" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">mọi vòng đọc ra cùng lúc từ một lưới cố định</text>
+
+        <!-- cost chart -->
+        <line x1="70" y1="290" x2="620" y2="290" stroke="#8a94a6" stroke-width="1.5"/>
+        <line x1="70" y1="290" x2="70" y2="215" stroke="#8a94a6" stroke-width="1.5"/>
+        <text x="345" y="310" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif">khoảng cách offset giảm dần →</text>
+        <text x="45" y="252" text-anchor="middle" font-size="11" fill="#8a94a6" font-family="sans-serif" transform="rotate(-90 45 252)">chi phí</text>
+
+        <path d="M75,285 C160,278 230,255 290,225 L320,222" fill="none" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+        <line x1="320" y1="222" x2="615" y2="222" stroke="#dc2626" stroke-width="3" stroke-dasharray="6 4"/>
+        <text x="470" y="215" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">Method A - chặn bởi trần max-ring (vòng trong bị cắt bớt)</text>
+
+        <path d="M75,283 C200,280 400,278 615,277" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round"/>
+        <text x="470" y="270" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif" font-weight="700">Method B - phẳng, theo lưới, không bùng nổ</text>
+      </svg>
+      <figcaption>Method A trả tiền theo <b>số vòng</b> nên khoảng cách càng nhỏ chi phí càng tăng dốc, phải chặn bằng trần max-ring (đánh đổi: mất các vòng trong cùng). Method B trả tiền theo <b>kích thước lưới</b> cố định - khoảng cách nhỏ hơn chỉ đọc thêm mức đẳng trị, không làm phình chi phí.</figcaption>
+    </figure>
+
+    <p>Cả hai phương pháp: ưu tiên tô scanline cho vùng phẳng lớn; dành contour/spiral cho những hình mà <em>bản chất hình dạng</em> cần đến chúng (bộ chọn tự động đã làm việc này, xem <a href="03-thuat-toan-to.html">Chương 3 §4</a>).</p>
+
+    <h3>Trang trí (đường lấp đầy không gian, Voronoi)</h3>
+    <ul>
+      <li>Hilbert/Peano: chặn <b>bậc</b> của đường cong (ví dụ 2⁷ hoặc 3⁴ ô/cạnh) để số điểm không thể bùng nổ.</li>
+      <li>Voronoi: cắt ô ngây thơ là <b>O(site²)</b>; chặn số site (ví dụ ≤ 240). Dùng một cấu trúc không gian (hoặc một thuật toán Voronoi kiểu Fortune's algorithm thực thụ) nếu cần nhiều ô hơn.</li>
+    </ul>
+
+    <h2>4. Xén hình: bậc hai ẩn</h2>
+    <p>Xén polyline vào một vùng tổng quát kiểm tra mọi đoạn với mọi cạnh biên → <b><code>O(đoạn × cạnh biên)</code></b>. Việc lát hoa văn (pattern tiling) nhân thêm số lượng này với số ô lát. Đây là điểm nóng bất ngờ phổ biến nhất. Các biện pháp khắc phục:</p>
+
+    <div class="box warn">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>
+      <span class="box-t">Điểm nóng thường bị bỏ sót</span>
+      <p>Một vòng lát hoa văn (xem <a href="06-hoa-van.html">Chương 6</a>) trông vô hại nhưng nhân số đoạn với số ô lát <em>và</em> số cạnh biên - dễ dàng biến một thao tác tưởng rẻ thành một lượt duyệt bậc hai chạy hàng giây.</p>
+    </div>
+
+    <ul>
+      <li><b>Loại sớm bằng bounding box (bbox reject):</b> bỏ qua bất kỳ cặp (đoạn, cạnh) nào có bounding box không chồng lấp - biến phần lớn phép so sánh thành một lượt kiểm tra rẻ, thoát sớm.</li>
+      <li><b>Spatial index</b> trên các cạnh biên (lưới đều, quadtree, hoặc interval tree theo y). Chỉ truy vấn những cạnh gần đoạn đang xét. Đưa chi phí về gần <code>O(đoạn · log)</code>.</li>
+      <li><b>Chặn số ô lát:</b> nếu số ô lát ước tính lớn phi lý, lùi về tô phẳng thay vì lát hàng triệu ô.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 300" width="680" role="img" aria-label="Loại sớm bằng bounding box và spatial index khi xén">
+        <!-- spatial grid -->
+        <g stroke="#e6ecf5" stroke-width="1">
+          <path d="M40 40 h600 M40 100 h600 M40 160 h600 M40 220 h600 M40 260 h600"/>
+          <path d="M40 40 v220 M160 40 v220 M280 40 v220 M400 40 v220 M520 40 v220 M640 40 v220"/>
+        </g>
+        <rect x="280" y="100" width="120" height="60" fill="#eaf1ff" opacity=".7"/>
+        <text x="340" y="94" text-anchor="middle" font-size="10" fill="#2563eb" font-family="sans-serif">ô của spatial index chứa đoạn</text>
+
+        <!-- boundary polygon edges -->
+        <g stroke="#1a2230" stroke-width="2.4" fill="none">
+          <path d="M90 220 L150 130"/>
+          <path d="M150 130 L260 115"/>
+          <path d="M330 108 L400 140"/>
+          <path d="M470 60 L560 90"/>
+          <path d="M560 90 L600 200"/>
+        </g>
+        <!-- bboxes for edges: near ones highlighted, far ones greyed -->
+        <rect x="150" y="130" width="110" height="15" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 3"/>
+        <rect x="330" y="108" width="70" height="32" fill="none" stroke="#d97706" stroke-width="1.6" stroke-dasharray="4 3"/>
+        <rect x="88" y="130" width="62" height="90" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <rect x="470" y="60" width="90" height="30" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <rect x="560" y="90" width="40" height="110" fill="none" stroke="#c9d2e0" stroke-width="1.4" stroke-dasharray="3 3" opacity=".7"/>
+        <text x="115" y="255" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+        <text x="500" y="45" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+        <text x="612" y="205" font-size="16" fill="#94a3b8" font-family="sans-serif">✕</text>
+
+        <!-- target segment -->
+        <line x1="295" y1="150" x2="385" y2="118" stroke="#2563eb" stroke-width="3.6" stroke-linecap="round"/>
+        <rect x="293" y="116" width="94" height="36" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="4 3"/>
+
+        <g font-family="sans-serif" font-size="11.5">
+          <rect x="40" y="272" width="14" height="4" fill="#2563eb"/><text x="60" y="278" fill="#4a5568">đoạn cần xén (và bbox của nó)</text>
+          <rect x="260" y="272" width="14" height="4" fill="#d97706"/><text x="280" y="278" fill="#4a5568">cạnh có bbox chồng lấp → kiểm tra thật</text>
+          <rect x="500" y="272" width="14" height="4" fill="#c9d2e0"/><text x="520" y="278" fill="#4a5568">cạnh bbox không chồng → loại sớm (✕)</text>
+        </g>
+      </svg>
+      <figcaption>Bounding-box reject biến phần lớn cặp (đoạn, cạnh) thành một phép loại rẻ tiền tức thời; spatial index (lưới ở đây) thu hẹp danh sách ứng viên xuống chỉ những cạnh nằm gần đoạn đang xét, đưa chi phí từ <code>O(đoạn × cạnh)</code> về gần <code>O(đoạn · log)</code>.</figcaption>
+    </figure>
+
+    <h2>5. Sắp xếp: O(n²) với một ngưỡng cắt</h2>
+    <p>Láng giềng gần nhất tham lam (xem <a href="07-sap-xep.html">Chương 7</a>) là <code>O(n²)</code>. Các bộ tô dày đặc sinh ra hàng chục nghìn chuỗi, nên:</p>
+    <ul>
+      <li><b>Ngưỡng cắt</b> (ví dụ 4000 chuỗi): trên ngưỡng này, bỏ qua lượt <code>O(n²)</code> và dùng phương án dự phòng <b>O(n)</b> chỉ định hướng, tin cậy vào tính cục bộ vốn có của bộ tô (theo dòng quét/theo vòng).</li>
+      <li>Với các tập lớn nhưng quan trọng, dùng <b>spatial sort</b> (sắp theo lưới hoặc theo thứ tự Hilbert trên điểm giữa chuỗi) → <code>O(n log n)</code>, cho hành trình tốt hơn nhiều so với thứ tự nguồn thô.</li>
+      <li>Dùng khoảng cách <b>bình phương</b> (không gọi <code>sqrt</code>) trong vòng lặp trong cùng.</li>
+    </ul>
+
+    <h2>6. Raster: chặn và làm thô</h2>
+    <p>Raster là <code>O(hàng × cột)</code> và có thể chạm hàng triệu ô (xem <a href="09-raster.html">Chương 9 §2</a>):</p>
+    <ul>
+      <li>Bước quét ≥ một pixel nguồn (không bao giờ lấy mẫu vượt quá) <b>và</b> ≥ khoảng cách (interval).</li>
+      <li><b>Trần max-cell:</b> nếu <code>hàng × cột > kMaxCells</code>, làm thô cả hai bước theo <code>√(cells/cap)</code> và ghi chú lại.</li>
+      <li><b>Gộp run-length</b> + gộp công suất theo chế độ (modal) nén một dải gradient thành ít nét di chuyển hơn.</li>
+      <li>Không đưa các nét raster vào bộ mô phỏng hoạt hình (xem trước dưới dạng ảnh tĩnh) - mô phỏng hàng triệu nét sẽ giết chết độ mượt của giao diện.</li>
+    </ul>
+
+    <h2>7. Vector hoá khung xương: chặn bitmap</h2>
+    <p>Trục xương chữ nét đơn (xem <a href="05-chu-net-don.html">Chương 5</a>) raster hoá rồi làm mảnh dần lặp lại:</p>
+    <ul>
+      <li><b>Chặn độ phân giải và tổng số pixel</b> (ví dụ kích thước lớn nhất ~2600 px, ≤ ~9 triệu px).</li>
+      <li>Làm mảnh là <code>O(pixel)</code> mỗi vòng lặp, với số vòng lặp bị chặn (guard).</li>
+      <li>Vector hoá khung xương theo từng ký tự (glyph), không theo cả khối chữ, để mỗi bitmap luôn nhỏ.</li>
+    </ul>
+
+    <h2>8. Phát mã &amp; streaming</h2>
+    <ul>
+      <li><b>Cắt bớt độ chính xác toạ độ</b> và loại số 0 thừa (xem <a href="08-sinh-ma.html">Chương 8 §4</a>): ít byte hơn ⇒ bộ điều khiển look-ahead sâu hơn ⇒ chuyển động dày đặc mượt hơn, và ít công dựng chuỗi hơn.</li>
+      <li><b>Nén trạng thái modal</b> (xem <a href="08-sinh-ma.html">Chương 8 §3</a>) loại bỏ các dòng thừa - đầu ra nhỏ hơn, dựng và gửi nhanh hơn.</li>
+      <li>Dựng đầu ra bằng bộ đệm cấp phát trước / streaming writer, không nối chuỗi lặp lại (tránh tăng trưởng chuỗi kiểu <code>O(n²)</code>).</li>
+      <li>Với công việc rất lớn, <b>stream</b> tới thiết bị/tệp theo từng phần thay vì dựng toàn bộ chương trình trong bộ nhớ.</li>
+    </ul>
+
+    <h2>9. Giữ giao diện mượt mà</h2>
+    <ul>
+      <li><b>Báo cáo tiến độ</b> với nhịp thưa (ví dụ mỗi hình, hoặc mỗi N dòng raster) để một tác vụ dài hiện thanh tiến trình chạy, không phải một cửa sổ đứng hình.</li>
+      <li><b>Sinh mã ngoài luồng giao diện</b> (worker/nền) cho tác vụ nặng; gửi kết quả về sau. Giữ phần hình học thuần khiết/an toàn luồng (thread-safe) để việc này trở nên đơn giản.</li>
+      <li><b>Huỷ tác vụ (cancellation):</b> cho phép huỷ một tác vụ sinh mã dài; kiểm tra một cờ ở cùng nhịp với tiến độ.</li>
+      <li><b>Tái sinh gia tăng (incremental regeneration):</b> chỉ sinh lại những hình/lớp đã đổi; cache phần còn lại. Làm phẳng và tô của một hình chưa động tới không nên lặp lại.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 680 260" width="680" role="img" aria-label="Sắp xếp có ngưỡng cắt và sinh mã ngoài luồng giữ giao diện mượt mà">
+        <text x="165" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Sắp xếp: ngưỡng cắt</text>
+        <rect x="90" y="40" width="150" height="42" rx="8" fill="#f4f0fb" stroke="#d8c9f0"/>
+        <text x="165" y="65" text-anchor="middle" font-size="12" fill="#4a5568" font-family="sans-serif">n chuỗi cần sắp xếp</text>
+        <path d="M165 82 v20" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#arh)"/>
+        <polygon points="165,102 220,132 165,162 110,132" fill="#fff8e6" stroke="#f2d88a"/>
+        <text x="165" y="128" text-anchor="middle" font-size="10.5" fill="#4a5568" font-family="sans-serif">n ≤</text>
+        <text x="165" y="141" text-anchor="middle" font-size="10.5" fill="#4a5568" font-family="sans-serif">4000?</text>
+
+        <path d="M110 132 h-40" stroke="#16a34a" stroke-width="1.8" marker-end="url(#arh)"/>
+        <text x="55" y="122" text-anchor="middle" font-size="10.5" fill="#16a34a" font-family="sans-serif">đúng</text>
+        <rect x="4" y="140" width="118" height="46" rx="8" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="63" y="160" text-anchor="middle" font-size="10.5" fill="#166534" font-family="sans-serif">Láng giềng gần nhất</text>
+        <text x="63" y="174" text-anchor="middle" font-size="10.5" fill="#166534" font-family="sans-serif">tham lam · O(n²)</text>
+
+        <path d="M220 132 h40" stroke="#dc2626" stroke-width="1.8" marker-end="url(#arh)"/>
+        <text x="280" y="122" text-anchor="middle" font-size="10.5" fill="#dc2626" font-family="sans-serif">sai</text>
+        <rect x="228" y="140" width="118" height="46" rx="8" fill="#fff1f0" stroke="#f4b7b0"/>
+        <text x="287" y="160" text-anchor="middle" font-size="10.5" fill="#8a2323" font-family="sans-serif">Spatial/Hilbert sort</text>
+        <text x="287" y="174" text-anchor="middle" font-size="10.5" fill="#8a2323" font-family="sans-serif">fallback · O(n log n)</text>
+
+        <line x1="380" y1="10" x2="380" y2="250" stroke="#e6ecf5" stroke-width="1.5"/>
+
+        <text x="530" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1a2230" font-family="sans-serif">Sinh mã ngoài luồng</text>
+        <rect x="420" y="45" width="220" height="46" rx="8" fill="#eaf1ff" stroke="#b9d4ff"/>
+        <text x="530" y="63" text-anchor="middle" font-size="11" fill="#1e49b8" font-family="sans-serif" font-weight="700">Luồng giao diện (UI)</text>
+        <rect x="432" y="70" width="150" height="10" rx="5" fill="#dfe5ee"/>
+        <rect x="432" y="70" width="96" height="10" rx="5" fill="#2563eb"/>
+        <circle cx="612" cy="75" r="9" fill="#fff" stroke="#dc2626" stroke-width="1.6"/>
+        <text x="612" y="79" text-anchor="middle" font-size="9" fill="#dc2626" font-family="sans-serif">✕</text>
+
+        <path d="M500 91 v18" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arh)"/>
+        <text x="470" y="104" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">cancel</text>
+        <path d="M560 127 v-18" stroke="#94a3b8" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arh2)"/>
+        <text x="590" y="104" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">progress %</text>
+
+        <rect x="420" y="127" width="220" height="46" rx="8" fill="#0f1729" stroke="#1c2b4a"/>
+        <text x="530" y="145" text-anchor="middle" font-size="11" fill="#9be59b" font-family="sans-serif" font-weight="700">Luồng nền (worker)</text>
+        <text x="530" y="161" text-anchor="middle" font-size="10" fill="#d6e2ff" font-family="sans-serif">sinh hình học (thuần/an toàn luồng)</text>
+
+        <path d="M530 173 v18" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arh)"/>
+        <text x="530" y="207" text-anchor="middle" font-size="9.5" fill="#8a94a6" font-family="sans-serif">chỉ sinh lại hình đã đổi</text>
+        <rect x="420" y="212" width="68" height="30" rx="6" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="454" y="231" text-anchor="middle" font-size="9.5" fill="#166534" font-family="sans-serif">cache</text>
+        <rect x="500" y="212" width="68" height="30" rx="6" fill="#fff8e6" stroke="#f2d88a"/>
+        <text x="534" y="231" text-anchor="middle" font-size="9.5" fill="#7a5b12" font-family="sans-serif">đã đổi</text>
+        <rect x="580" y="212" width="60" height="30" rx="6" fill="#eefaf0" stroke="#b7e3c2"/>
+        <text x="610" y="231" text-anchor="middle" font-size="9.5" fill="#166534" font-family="sans-serif">cache</text>
+
+        <defs>
+          <marker id="arh" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+          </marker>
+          <marker id="arh2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#8a94a6"/>
+          </marker>
+        </defs>
+      </svg>
+      <figcaption>Trái: trên ngưỡng cắt, sắp xếp lùi từ <code>O(n²)</code> tham lam về <code>O(n log n)</code> spatial/Hilbert sort. Phải: tác vụ nặng chạy trên luồng nền, báo tiến độ và chấp nhận huỷ; chỉ hình đã thay đổi mới được sinh lại, phần còn lại lấy từ cache.</figcaption>
+    </figure>
+
+    <h2>10. Tính xác định (determinism) - một quy tắc gắn liền với hiệu năng</h2>
+    <div class="box note">
+      <svg class="box-ic" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round"/></svg>
+      <span class="box-t">Ngẫu nhiên có kiểm soát</span>
+      <p>Tránh dùng RNG trong hình học (ví dụ jitter cho Voronoi): lấy tính ngẫu nhiên từ một <b>hash trên chỉ số (hash-based)</b> để đầu ra tái lập được giữa các lần chạy. Đầu ra xác định (deterministic) làm cho việc cache trở nên hợp lệ và việc gỡ lỗi trở nên khả thi; một bộ sinh không xác định thì không thể an toàn bỏ qua phần việc "chưa đổi".</p>
+    </div>
+
+    <h2>11. Checklist (AI giữ cho quá trình sinh mã luôn nhanh)</h2>
+    <ul>
+      <li>Mọi cấu trúc lặp đều có một trần cứng (vòng, bậc, site, ô, số lần lặp).</li>
+      <li>Làm phẳng thích ứng; không bao giờ tinh chỉnh dưới độ phân giải công cụ; cache theo từng hình.</li>
+      <li>Xén hình dùng bbox reject + một spatial index; chặn số ô lát.</li>
+      <li>Sắp xếp chuyển sang O(n) / spatial sort trên ngưỡng số chuỗi; chỉ dùng khoảng cách bình phương.</li>
+      <li>Raster chặn trần + làm thô; gộp run-length; không đưa vào mô phỏng hoạt hình.</li>
+      <li>Phát mã cắt bớt độ chính xác, nén trạng thái modal, stream các công việc lớn.</li>
+      <li>Tác vụ nặng chạy ngoài luồng giao diện, có tiến độ + huỷ; tái sinh gia tăng.</li>
+      <li>Hình học có tính xác định (dựa trên hash, không dùng RNG).</li>
+    </ul>
+
+    <div class="pager">
+      <a href="10-do-muot.html"><div class="dir">← Trước</div><div class="ttl">10 · Độ mượt &amp; Liên tục đường cong</div></a>
+      <a class="next" href="12-truong-hop-bien.html"><div class="dir">Chương tiếp →</div><div class="ttl">12 · Đầu vào, Đơn vị &amp; Trường hợp biên</div></a>
+    </div>
+
+  </article>
+  </main>
+</div>
+<script src="assets/book.js"></script>
+</body>
+</html>
